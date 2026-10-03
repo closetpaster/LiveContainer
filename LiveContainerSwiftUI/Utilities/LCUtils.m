@@ -919,10 +919,6 @@
     return shared;
 }
 
-+ (instancetype)shared {
-    return [self sharedServer];
-}
-
 - (instancetype)init {
     self = [super init];
     if (self) {
