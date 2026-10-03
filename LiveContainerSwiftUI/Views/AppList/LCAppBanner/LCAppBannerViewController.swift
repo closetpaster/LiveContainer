@@ -48,6 +48,11 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
         bannerView.addGestureRecognizer(doubleTapGesture)
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        refreshView()
+    }
+
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if previousTraitCollection == nil || traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
@@ -206,16 +211,6 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
         )
         sectionChildren.append(assignMenu)
 
-        let createDedicatedAction = UIAction(
-            title: "lc.appBanner.createDedicatedLC".loc,
-            image: UIImage(systemName: "shippingbox.fill")
-        ) { [weak self] _ in
-            Task { [weak self] in
-                await self?.packageDedicatedLiveContainer()
-            }
-        }
-        sectionChildren.append(createDedicatedAction)
-
         let addToHomeScreenMenu = UIMenu(
             title: "lc.appBanner.addToHomeScreen".loc,
             image: UIImage(systemName: "plus.app"),
@@ -361,6 +356,10 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             return
         }
         let model = configuration.model
+        if model.uiAssignedContainer == nil {
+            model.uiAssignedContainer = "livecontainer"
+            refreshView()
+        }
         let appInfo = model.appInfo
         let displayName = appInfo.displayName() ?? model.displayName
         let rawBundlePath = appInfo.bundlePath() ?? appInfo.relativeBundlePath
@@ -378,7 +377,7 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
         }
 
         let sanitizedName = displayName.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
-        let fileName = "\(sanitizedName).mobileconfig"
+        let fileName = sanitizedName.isEmpty ? "profile.mobileconfig" : "\(sanitizedName).mobileconfig"
 
         if let serverURL = LCMobileConfigServer.shared().serveProfileData(data, fileName: fileName) {
             UIApplication.shared.open(serverURL, options: [:], completionHandler: nil)
@@ -392,6 +391,10 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             return
         }
         let model = configuration.model
+        if model.uiAssignedContainer == nil {
+            model.uiAssignedContainer = "livecontainer"
+            refreshView()
+        }
         let appInfo = model.appInfo
         let displayName = appInfo.displayName() ?? model.displayName
         let rawBundlePath = appInfo.bundlePath() ?? appInfo.relativeBundlePath
@@ -415,7 +418,8 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
 
             let sanitizedName = displayName.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
-            let fileURL = temporaryDirectory.appendingPathComponent("\(sanitizedName).mobileconfig")
+            let fileBaseName = sanitizedName.isEmpty ? "profile" : sanitizedName
+            let fileURL = temporaryDirectory.appendingPathComponent("\(fileBaseName).mobileconfig")
             try data.write(to: fileURL, options: .atomic)
             exportTemporaryDirectory = temporaryDirectory
 

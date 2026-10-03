@@ -788,6 +788,18 @@
                                             iconStyle:(GeneratedIconStyle)iconStyle {
     if (!bundlePath || bundlePath.length == 0) return nil;
     
+    if (![bundlePath isAbsolutePath]) {
+        NSString *absPath = [LCSharedUtils.bundlePath.path stringByAppendingPathComponent:bundlePath];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:absPath]) {
+            bundlePath = absPath;
+        } else {
+            absPath = [LCSharedUtils.appGroupBundlePath.path stringByAppendingPathComponent:bundlePath];
+            if ([[NSFileManager defaultManager] fileExistsAtPath:absPath]) {
+                bundlePath = absPath;
+            }
+        }
+    }
+    
     NSString *scheme = (targetScheme && targetScheme.length > 0) ? targetScheme : [LCSharedUtils assignedContainerSchemeForApp:bundlePath];
     if (!scheme || scheme.length == 0) {
         scheme = @"livecontainer";
@@ -841,7 +853,7 @@
         @"PayloadUUID": payloadUUID,
         @"PayloadVersion": @(1),
         @"Precomposed": @YES,
-        @"toPayloadOrganization": @"LiveContainer",
+        @"PayloadOrganization": @"LiveContainer",
         @"URL": appClipUrl
     }];
     if (iconData) {
@@ -890,6 +902,7 @@
 @interface LCMobileConfigServer () {
     int _serverFd;
     dispatch_queue_t _serverQueue;
+    UIBackgroundTaskIdentifier _bgTask;
 }
 @property (nonatomic, copy) NSData *currentProfileData;
 @property (nonatomic, copy) NSString *currentFileName;
@@ -906,10 +919,15 @@
     return shared;
 }
 
++ (instancetype)shared {
+    return [self sharedServer];
+}
+
 - (instancetype)init {
     self = [super init];
     if (self) {
         _serverFd = -1;
+        _bgTask = UIBackgroundTaskInvalid;
         _serverQueue = dispatch_queue_create("com.livecontainer.mobileconfigserver", DISPATCH_QUEUE_SERIAL);
     }
     return self;
@@ -922,6 +940,10 @@
     }
     self.currentProfileData = nil;
     self.currentFileName = nil;
+    if (_bgTask != UIBackgroundTaskInvalid) {
+        [[UIApplication sharedApplication] endBackgroundTask:_bgTask];
+        _bgTask = UIBackgroundTaskInvalid;
+    }
 }
 
 - (NSURL *)serveProfileData:(NSData *)profileData fileName:(NSString *)fileName {
@@ -931,17 +953,29 @@
         return nil;
     }
     
+    // Ignore SIGPIPE so closed peer connections do not crash the app
+    signal(SIGPIPE, SIG_IGN);
+    
+    // Begin background execution assertion so iOS does not suspend the process when Safari opens
+    _bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"LCMobileConfigServer" expirationHandler:^{
+        [self stop];
+    }];
+    
     self.currentProfileData = profileData;
     self.currentFileName = fileName ?: @"profile.mobileconfig";
     
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         NSLog(@"[LCMobileConfigServer] socket() failed: %s", strerror(errno));
+        [self stop];
         return nil;
     }
     
     int opt = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#ifdef SO_NOSIGPIPE
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt));
+#endif
     
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -952,6 +986,7 @@
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         NSLog(@"[LCMobileConfigServer] bind() failed: %s", strerror(errno));
         close(fd);
+        [self stop];
         return nil;
     }
     
@@ -959,6 +994,7 @@
     if (getsockname(fd, (struct sockaddr *)&addr, &addrLen) < 0) {
         NSLog(@"[LCMobileConfigServer] getsockname() failed: %s", strerror(errno));
         close(fd);
+        [self stop];
         return nil;
     }
     
@@ -966,6 +1002,7 @@
     if (listen(fd, 5) < 0) {
         NSLog(@"[LCMobileConfigServer] listen() failed: %s", strerror(errno));
         close(fd);
+        [self stop];
         return nil;
     }
     
@@ -988,24 +1025,51 @@
                 socklen_t clientLen = sizeof(clientAddr);
                 int clientFd = accept(sfd, (struct sockaddr *)&clientAddr, &clientLen);
                 if (clientFd >= 0) {
+#ifdef SO_NOSIGPIPE
+                    int nosigpipe = 1;
+                    setsockopt(clientFd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
+#endif
                     char reqBuf[2048] = {0};
-                    recv(clientFd, reqBuf, sizeof(reqBuf) - 1, 0);
+                    ssize_t n = recv(clientFd, reqBuf, sizeof(reqBuf) - 1, 0);
+                    if (n <= 0) {
+                        close(clientFd);
+                        continue;
+                    }
+                    
+                    BOOL isHead = (strncmp(reqBuf, "HEAD", 4) == 0);
                     
                     NSData *data = strongSelf.currentProfileData;
-                    NSString *name = strongSelf.currentFileName ?: @"profile.mobileconfig";
+                    NSString *rawName = strongSelf.currentFileName ?: @"profile.mobileconfig";
+                    
+                    NSMutableString *asciiSafe = [NSMutableString string];
+                    for (NSUInteger i = 0; i < rawName.length; i++) {
+                        unichar c = [rawName characterAtIndex:i];
+                        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-') {
+                            [asciiSafe appendFormat:@"%C", c];
+                        } else {
+                            [asciiSafe appendString:@"_"];
+                        }
+                    }
+                    if (asciiSafe.length == 0 || [asciiSafe isEqualToString:@".mobileconfig"]) {
+                        asciiSafe = [NSMutableString stringWithString:@"profile.mobileconfig"];
+                    }
+                    
+                    NSString *percentName = [rawName stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]] ?: asciiSafe;
                     
                     NSString *httpHeader = [NSString stringWithFormat:
                         @"HTTP/1.1 200 OK\r\n"
                         @"Content-Type: application/x-apple-aspen-config\r\n"
-                        @"Content-Disposition: attachment; filename=\"%@\"\r\n"
+                        @"Content-Disposition: attachment; filename=\"%@\"; filename*=UTF-8''%@\r\n"
                         @"Content-Length: %lu\r\n"
                         @"Cache-Control: no-cache, no-store, must-revalidate\r\n"
                         @"Connection: close\r\n\r\n",
-                        name, (unsigned long)data.length];
+                        asciiSafe, percentName, (unsigned long)data.length];
                     
                     NSData *headerData = [httpHeader dataUsingEncoding:NSUTF8StringEncoding];
                     send(clientFd, headerData.bytes, headerData.length, 0);
-                    send(clientFd, data.bytes, data.length, 0);
+                    if (!isHead && data.length > 0) {
+                        send(clientFd, data.bytes, data.length, 0);
+                    }
                     close(clientFd);
                 }
             }

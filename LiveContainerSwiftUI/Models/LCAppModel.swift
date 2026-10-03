@@ -33,7 +33,15 @@ class LCAppModel: ObservableObject, Hashable {
     @Published var uiIsShared : Bool
     @Published var uiDefaultDataFolder : String?
     @Published var uiContainers : [LCContainer]
-    @Published var uiSelectedContainer : LCContainer?
+    @Published var uiSelectedContainer : LCContainer? {
+        didSet {
+            if let uiAssignedContainer {
+                let bundleKey = appInfo.relativeBundlePath
+                let containerFolder = uiSelectedContainer?.folderName
+                LCSharedUtils.assignApp(bundleKey, toContainerScheme: uiAssignedContainer, containerFolderName: containerFolder)
+            }
+        }
+    }
     @Published var uiIs32bit : Bool
     @Published var uiIs32bitEmulator : Bool
     @Published var uiTweakFolder : String? {

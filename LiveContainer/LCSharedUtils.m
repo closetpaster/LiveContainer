@@ -484,25 +484,39 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
         return nil;
     }
     NSUserDefaults *defaults = [NSUserDefaults lcSharedDefaults] ?: [NSUserDefaults standardUserDefaults];
-    NSString *scheme = [defaults stringForKey:[NSString stringWithFormat:@"LCAssignedLC_%@", bundlePathOrId]];
-    if (scheme && scheme.length > 0) {
-        return scheme.lowercaseString;
-    }
-    
     NSString *lastComp = bundlePathOrId.lastPathComponent;
-    scheme = [defaults stringForKey:[NSString stringWithFormat:@"LCAssignedLC_%@", lastComp]];
+    NSString *scheme = [defaults stringForKey:[NSString stringWithFormat:@"LCAssignedLC_%@", lastComp]];
+    if (!scheme || scheme.length == 0) {
+        scheme = [defaults stringForKey:[NSString stringWithFormat:@"LCAssignedLC_%@", bundlePathOrId]];
+    }
     if (scheme && scheme.length > 0) {
-        return scheme.lowercaseString;
+        NSString *normScheme = scheme.lowercaseString;
+        if ([normScheme isEqualToString:@"livecontainer1"]) normScheme = @"livecontainer";
+        NSString *assigned = [defaults stringForKey:[NSString stringWithFormat:@"LCAssignedApp_%@", normScheme]];
+        if (!assigned && [normScheme isEqualToString:@"livecontainer"]) {
+            assigned = [defaults stringForKey:@"LCAssignedApp_livecontainer1"];
+        }
+        if (assigned && ([assigned isEqualToString:bundlePathOrId] || [assigned isEqualToString:lastComp] || [[assigned stringByDeletingPathExtension] isEqualToString:[lastComp stringByDeletingPathExtension]])) {
+            return normScheme;
+        }
     }
     
     NSArray<NSString *> *allSchemes = [self lcUnorderedUrlSchemes];
     for (NSString *candidateScheme in allSchemes) {
-        NSString *assigned = [defaults stringForKey:[NSString stringWithFormat:@"LCAssignedApp_%@", candidateScheme]];
+        NSString *norm = candidateScheme.lowercaseString;
+        if ([norm isEqualToString:@"livecontainer1"]) norm = @"livecontainer";
+        NSString *assigned = [defaults stringForKey:[NSString stringWithFormat:@"LCAssignedApp_%@", norm]];
+        if (!assigned && [norm isEqualToString:@"livecontainer"]) {
+            assigned = [defaults stringForKey:@"LCAssignedApp_livecontainer1"];
+        }
         if (!assigned) {
-            assigned = [defaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchBundleId_%@", candidateScheme]];
+            assigned = [defaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchBundleId_%@", norm]];
+        }
+        if (!assigned && [norm isEqualToString:@"livecontainer"]) {
+            assigned = [defaults stringForKey:@"LCAutoLaunchBundleId_livecontainer1"];
         }
         if (assigned && ([assigned isEqualToString:bundlePathOrId] || [assigned isEqualToString:lastComp] || [[assigned stringByDeletingPathExtension] isEqualToString:[lastComp stringByDeletingPathExtension]])) {
-            return candidateScheme.lowercaseString;
+            return norm;
         }
     }
     return nil;
@@ -562,11 +576,24 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
     }
     
     if (normalizedTarget && normalizedTarget.length > 0 && bundleKey && bundleKey.length > 0) {
+        // If another app was previously assigned to this targetScheme, clear its LCAssignedLC key
+        NSString *prevAssigned = [defaults stringForKey:[NSString stringWithFormat:@"LCAssignedApp_%@", normalizedTarget]];
+        if (!prevAssigned && [normalizedTarget isEqualToString:@"livecontainer"]) {
+            prevAssigned = [defaults stringForKey:@"LCAssignedApp_livecontainer1"];
+        }
+        if (prevAssigned && ![prevAssigned isEqualToString:bundleKey] && ![prevAssigned isEqualToString:bundlePathOrId]) {
+            [defaults removeObjectForKey:[NSString stringWithFormat:@"LCAssignedLC_%@", prevAssigned]];
+            [defaults removeObjectForKey:[NSString stringWithFormat:@"LCAssignedLC_%@", prevAssigned.lastPathComponent]];
+        }
+
         [defaults setObject:bundleKey forKey:[NSString stringWithFormat:@"LCAssignedApp_%@", normalizedTarget]];
         [defaults setObject:bundleKey forKey:[NSString stringWithFormat:@"LCAutoLaunchBundleId_%@", normalizedTarget]];
         if (containerFolderName && containerFolderName.length > 0) {
             [defaults setObject:containerFolderName forKey:[NSString stringWithFormat:@"LCAssignedContainer_%@", normalizedTarget]];
             [defaults setObject:containerFolderName forKey:[NSString stringWithFormat:@"LCAutoLaunchContainer_%@", normalizedTarget]];
+        } else {
+            [defaults removeObjectForKey:[NSString stringWithFormat:@"LCAssignedContainer_%@", normalizedTarget]];
+            [defaults removeObjectForKey:[NSString stringWithFormat:@"LCAutoLaunchContainer_%@", normalizedTarget]];
         }
         [defaults setObject:normalizedTarget forKey:[NSString stringWithFormat:@"LCAssignedLC_%@", bundleKey]];
     }

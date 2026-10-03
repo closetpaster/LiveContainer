@@ -771,7 +771,7 @@ int LiveContainerMain(int argc, char *argv[]) {
     // 2. Check pending launch in shared defaults (e.g. from extension, deep link, or helper)
     if(!selectedApp) {
         NSString *pendingScheme = [lcSharedDefaults stringForKey:@"LCPendingLaunchScheme"];
-        if (!pendingScheme || [pendingScheme isEqualToString:lcAppUrlScheme] || ([lcAppUrlScheme isEqualToString:@"livecontainer"] && [pendingScheme isEqualToString:@"livecontainer1"])) {
+        if (!pendingScheme || [pendingScheme isEqualToString:lcAppUrlScheme] || ([lcAppUrlScheme isEqualToString:@"livecontainer"] && [pendingScheme isEqualToString:@"livecontainer1"]) || ([lcAppUrlScheme isEqualToString:@"livecontainer1"] && [pendingScheme isEqualToString:@"livecontainer"])) {
             NSString *pendingApp = [lcSharedDefaults stringForKey:@"LCPendingLaunchBundleID"];
             NSDate *pendingDate = [lcSharedDefaults objectForKey:@"LCPendingLaunchDate"];
             if (pendingApp && pendingDate && [pendingDate timeIntervalSinceNow] > -5.0 && [pendingDate timeIntervalSinceNow] <= 1.0) {
@@ -793,8 +793,22 @@ int LiveContainerMain(int argc, char *argv[]) {
         if(assignedApp && assignedApp.length > 0 && ![assignedApp isEqualToString:@"ui"]) {
             selectedApp = assignedApp;
             if(!selectedContainer) {
-                selectedContainer = [lcSharedDefaults stringForKey:[NSString stringWithFormat:@"LCAssignedContainer_%@", lcAppUrlScheme]]
-                    ?: [lcSharedDefaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchContainer_%@", lcAppUrlScheme]];
+                selectedContainer = [lcSharedDefaults stringForKey:[NSString stringWithFormat:@"LCAssignedContainer_%@", lcAppUrlScheme]];
+                if (!selectedContainer && [lcAppUrlScheme isEqualToString:@"livecontainer1"]) {
+                    selectedContainer = [lcSharedDefaults stringForKey:@"LCAssignedContainer_livecontainer"];
+                }
+                if (!selectedContainer && [lcAppUrlScheme isEqualToString:@"livecontainer"]) {
+                    selectedContainer = [lcSharedDefaults stringForKey:@"LCAssignedContainer_livecontainer1"];
+                }
+                if (!selectedContainer) {
+                    selectedContainer = [lcSharedDefaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchContainer_%@", lcAppUrlScheme]];
+                }
+                if (!selectedContainer && [lcAppUrlScheme isEqualToString:@"livecontainer1"]) {
+                    selectedContainer = [lcSharedDefaults stringForKey:@"LCAutoLaunchContainer_livecontainer"];
+                }
+                if (!selectedContainer && [lcAppUrlScheme isEqualToString:@"livecontainer"]) {
+                    selectedContainer = [lcSharedDefaults stringForKey:@"LCAutoLaunchContainer_livecontainer1"];
+                }
             }
         }
     }
