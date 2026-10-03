@@ -1,6 +1,74 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "lc.appBanner.createDedicatedLC" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Package Dedicated App (LiveContainer 2)"
+          }
+        },
+        "zh_CN" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打包专属应用 (LiveContainer 2)"
+          }
+        }
+      }
+    },
+    "lc.appBanner.createDedicatedLCDesc %@ %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A dedicated %2$@ instance will be configured and packaged for %1$@ with its icon and display name. It will launch %1$@ immediately on open."
+          }
+        },
+        "zh_CN" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将为 %1$@ 配置并打包专属的 %2$@ 实例，包含其图标和显示名称。打开时将立即直接启动 %1$@。"
+          }
+        }
+      }
+    },
+    "lc.appBanner.createDedicatedLCSlotPrompt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select Target Slot"
+          }
+        },
+        "zh_CN" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择目标槽位"
+          }
+        }
+      }
+    },
+    "lc.appBanner.shareOrExportIPA" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Share / Export IPA"
+          }
+        },
+        "zh_CN" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分享 / 导出 IPA"
+          }
+        }
+      }
+    },
     "lc.appBanner.addToHomeScreen" : {
       "extractionState" : "manual",
       "localizations" : {

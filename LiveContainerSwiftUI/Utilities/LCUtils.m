@@ -293,7 +293,19 @@
 }
 
 + (NSURL *)archiveIPAWithBundleName:(NSString*)newBundleName includingExtraInfoDict:(NSDictionary *)extraInfoDict error:(NSError **)error {
-    if (*error) return nil;
+    return [self archiveIPAWithBundleName:newBundleName
+                       guestAppBundlePath:nil
+                      guestAppDisplayName:nil
+                   includingExtraInfoDict:extraInfoDict
+                                    error:error];
+}
+
++ (NSURL *)archiveIPAWithBundleName:(NSString*)newBundleName
+                 guestAppBundlePath:(NSString*)guestAppBundlePath
+                guestAppDisplayName:(NSString*)guestAppDisplayName
+             includingExtraInfoDict:(NSDictionary *)extraInfoDict
+                              error:(NSError **)error {
+    if (error && *error) return nil;
 
     NSFileManager *manager = NSFileManager.defaultManager;
     NSURL *bundlePath = NSBundle.mainBundle.bundleURL;
@@ -303,42 +315,209 @@
     NSURL *tmpPayloadPath = [tmpPath URLByAppendingPathComponent:[NSString stringWithFormat:@"%@/Payload", newBundleName]];
     [manager removeItemAtURL:tmpPayloadPath error:nil];
     [manager createDirectoryAtURL:tmpPayloadPath withIntermediateDirectories:YES attributes:nil error:error];
-    if (*error) return nil;
+    if (error && *error) return nil;
     
     NSURL *tmpIPAPath = [tmpPath URLByAppendingPathComponent:[NSString stringWithFormat:@"%@.ipa", newBundleName]];
     
-
-    [manager copyItemAtURL:bundlePath toURL:[tmpPayloadPath URLByAppendingPathComponent:@"App.app"] error:error];
-    if (*error) return nil;
+    NSURL* appBundlePath = [tmpPayloadPath URLByAppendingPathComponent:@"App.app"];
+    [manager copyItemAtURL:bundlePath toURL:appBundlePath error:error];
+    if (error && *error) return nil;
     
-    NSURL *infoPath = [tmpPayloadPath URLByAppendingPathComponent:@"App.app/Info.plist"];
-    NSMutableDictionary *infoDict = [NSMutableDictionary dictionaryWithContentsOfURL:infoPath];
-    if (!infoDict) return nil;
+    NSURL *infoPath = [appBundlePath URLByAppendingPathComponent:@"Info.plist"];
+    NSData *infoData = [NSData dataWithContentsOfURL:infoPath];
+    if (!infoData) {
+        if (error) *error = [NSError errorWithDomain:@"archiveIPAWithBundleName" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Failed to read App Info.plist"}];
+        return nil;
+    }
+    NSMutableDictionary *infoDict = [NSPropertyListSerialization propertyListWithData:infoData
+                                                                              options:NSPropertyListMutableContainersAndLeaves
+                                                                               format:nil
+                                                                                error:error];
+    if (!infoDict || (error && *error)) return nil;
 
     infoDict[@"CFBundleDisplayName"] = newBundleName;
     infoDict[@"CFBundleName"] = newBundleName;
     infoDict[@"CFBundleIdentifier"] = [NSString stringWithFormat:@"com.kdt.%@", newBundleName];
-    infoDict[@"CFBundleURLTypes"][0][@"CFBundleURLSchemes"][0] = [newBundleName lowercaseString];
-    while([infoDict[@"CFBundleURLTypes"] count] > 1) {
-        [infoDict[@"CFBundleURLTypes"] removeLastObject];
-    }
+    
+    NSMutableArray *urlTypes = [NSMutableArray array];
+    [urlTypes addObject:[@{
+        @"CFBundleURLName": [NSString stringWithFormat:@"com.kdt.%@.urlscheme", [newBundleName lowercaseString]],
+        @"CFBundleURLSchemes": [NSMutableArray arrayWithObject:[newBundleName lowercaseString]]
+    } mutableCopy]];
+    infoDict[@"CFBundleURLTypes"] = urlTypes;
+
     [infoDict removeObjectForKey:@"UTExportedTypeDeclarations"];
     infoDict[@"CFBundleIconName"] = @"AppIconGrey";
-    if (infoDict[@"CFBundleIcons"][@"CFBundlePrimaryIcon"][@"CFBundleIconName"]) {
-        infoDict[@"CFBundleIcons"][@"CFBundlePrimaryIcon"][@"CFBundleIconName"] = @"AppIconGrey";
-    }
-    infoDict[@"CFBundleIcons"][@"CFBundlePrimaryIcon"][@"CFBundleIconFiles"][0] = @"AppIconGrey60x60";
+    infoDict[@"CFBundleIcons"] = [@{
+        @"CFBundlePrimaryIcon": [@{
+            @"CFBundleIconFiles": [NSMutableArray arrayWithObject:@"AppIconGrey60x60"],
+            @"CFBundleIconName": @"AppIconGrey"
+        } mutableCopy]
+    } mutableCopy];
+    infoDict[@"CFBundleIcons~ipad"] = [@{
+        @"CFBundlePrimaryIcon": [@{
+            @"CFBundleIconFiles": [NSMutableArray arrayWithObjects:@"AppIconGrey60x60", @"AppIconGrey76x76", nil],
+            @"CFBundleIconName": @"AppIconGrey"
+        } mutableCopy]
+    } mutableCopy];
     
-    if (infoDict[@"CFBundleIcons~ipad"][@"CFBundlePrimaryIcon"][@"CFBundleIconName"]) {
-        infoDict[@"CFBundleIcons~ipad"][@"CFBundlePrimaryIcon"][@"CFBundleIconName"] = @"AppIconGrey";
+    // Dedicated guest app configuration
+    if (guestAppBundlePath && guestAppBundlePath.length > 0) {
+        NSString *displayName = guestAppDisplayName;
+        NSDictionary *guestInfoPlist = [NSDictionary dictionaryWithContentsOfFile:[guestAppBundlePath stringByAppendingPathComponent:@"Info.plist"]];
+        NSDictionary *guestLCAppInfo = [NSDictionary dictionaryWithContentsOfFile:[guestAppBundlePath stringByAppendingPathComponent:@"LCAppInfo.plist"]];
+        if (!displayName || displayName.length == 0) {
+            displayName = guestInfoPlist[@"CFBundleDisplayName"] ?: guestInfoPlist[@"CFBundleName"] ?: newBundleName;
+        }
+        infoDict[@"CFBundleDisplayName"] = displayName;
+        infoDict[@"CFBundleName"] = displayName;
+        
+        NSString *relativeBundlePath = [guestAppBundlePath lastPathComponent];
+        infoDict[@"LCAutoLaunchBundleId"] = relativeBundlePath;
+        NSString *guestBundleId = guestInfoPlist[@"CFBundleIdentifier"] ?: guestLCAppInfo[@"LCOrignalBundleIdentifier"];
+        if (guestBundleId) {
+            infoDict[@"LCAutoLaunchGuestBundleId"] = guestBundleId;
+        }
+        
+        if (extraInfoDict[@"LCAutoLaunchContainer"]) {
+            infoDict[@"LCAutoLaunchContainer"] = extraInfoDict[@"LCAutoLaunchContainer"];
+        }
+        
+        // Save to shared defaults as well
+        NSUserDefaults *sharedDefaults = [NSUserDefaults lcSharedDefaults];
+        if (!sharedDefaults) {
+            sharedDefaults = [[NSUserDefaults alloc] initWithSuiteName:[LCSharedUtils appGroupID]];
+        }
+        if (sharedDefaults) {
+            NSString *scheme = [newBundleName lowercaseString];
+            [sharedDefaults setObject:relativeBundlePath forKey:[NSString stringWithFormat:@"LCAutoLaunchBundleId_%@", scheme]];
+            if (guestBundleId) {
+                [sharedDefaults setObject:guestBundleId forKey:[NSString stringWithFormat:@"LCAutoLaunchGuestBundleId_%@", scheme]];
+            }
+            if (extraInfoDict[@"LCAutoLaunchContainer"]) {
+                [sharedDefaults setObject:extraInfoDict[@"LCAutoLaunchContainer"] forKey:[NSString stringWithFormat:@"LCAutoLaunchContainer_%@", scheme]];
+            }
+        }
+        
+        // Copy guest URL schemes so the dedicated container can respond to deep links
+        NSArray *guestURLTypes = guestInfoPlist[@"CFBundleURLTypes"];
+        if ([guestURLTypes isKindOfClass:[NSArray class]]) {
+            for (NSDictionary *urlType in guestURLTypes) {
+                if ([urlType isKindOfClass:[NSDictionary class]]) {
+                    NSArray *schemes = urlType[@"CFBundleURLSchemes"];
+                    if ([schemes isKindOfClass:[NSArray class]]) {
+                        NSMutableArray *filteredSchemes = [NSMutableArray array];
+                        for (NSString *sch in schemes) {
+                            if ([sch isKindOfClass:[NSString class]] && ![sch.lowercaseString hasPrefix:@"livecontainer"]) {
+                                [filteredSchemes addObject:sch];
+                            }
+                        }
+                        if (filteredSchemes.count > 0) {
+                            [urlTypes addObject:[@{
+                                @"CFBundleURLName": urlType[@"CFBundleURLName"] ?: [NSString stringWithFormat:@"com.kdt.%@.guest", newBundleName],
+                                @"CFBundleURLSchemes": filteredSchemes
+                            } mutableCopy]];
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Handle Icons:
+        // 1. Copy any loose PNG icon files from guest bundle
+        NSMutableSet<NSString *> *copiedIconBasenames = [NSMutableSet new];
+        NSArray<NSString *> *guestFiles = [manager contentsOfDirectoryAtPath:guestAppBundlePath error:nil];
+        for (NSString *file in guestFiles) {
+            if ([file.pathExtension.lowercaseString isEqualToString:@"png"]) {
+                NSString *nameLower = file.lowercaseString;
+                if ([nameLower containsString:@"icon"] || [nameLower containsString:@"appicon"]) {
+                    NSURL *src = [NSURL fileURLWithPath:[guestAppBundlePath stringByAppendingPathComponent:file]];
+                    NSURL *dst = [appBundlePath URLByAppendingPathComponent:file];
+                    [manager removeItemAtURL:dst error:nil];
+                    [manager copyItemAtURL:src toURL:dst error:nil];
+                    
+                    NSString *base = [file stringByDeletingPathExtension];
+                    base = [base stringByReplacingOccurrencesOfString:@"@2x" withString:@""];
+                    base = [base stringByReplacingOccurrencesOfString:@"@3x" withString:@""];
+                    base = [base stringByReplacingOccurrencesOfString:@"~ipad" withString:@""];
+                    [copiedIconBasenames addObject:base];
+                }
+            }
+        }
+        
+        // 2. Extract / generate rendered icon image
+        UIImage *guestIcon = [UIImage generateIconForBundleURL:[NSURL fileURLWithPath:guestAppBundlePath] style:Original hasBorder:NO];
+        if (!guestIcon) {
+            NSString *lightPath = [guestAppBundlePath stringByAppendingPathComponent:@"LCAppIconLight.png"];
+            if ([manager fileExistsAtPath:lightPath]) {
+                guestIcon = [UIImage imageWithContentsOfFile:lightPath];
+            }
+        }
+        
+        void (^writeResized)(UIImage*, CGSize, NSString*) = ^(UIImage *img, CGSize size, NSString *filename) {
+            if (!img) return;
+            UIGraphicsBeginImageContextWithOptions(size, NO, 1.0);
+            [img drawInRect:CGRectMake(0, 0, size.width, size.height)];
+            UIImage *resized = UIGraphicsGetImageFromCurrentImageContext();
+            UIGraphicsEndImageContext();
+            if (resized) {
+                NSData *png = UIImagePNGRepresentation(resized);
+                if (png) {
+                    NSURL *dst = [appBundlePath URLByAppendingPathComponent:filename];
+                    [manager removeItemAtURL:dst error:nil];
+                    [png writeToURL:dst atomically:YES];
+                }
+            }
+        };
+        
+        if (guestIcon) {
+            // Write to all standard icon files and sizes
+            writeResized(guestIcon, CGSizeMake(120, 120), @"AppIconGuest60x60@2x.png");
+            writeResized(guestIcon, CGSizeMake(180, 180), @"AppIconGuest60x60@3x.png");
+            writeResized(guestIcon, CGSizeMake(152, 152), @"AppIconGuest76x76@2x~ipad.png");
+            writeResized(guestIcon, CGSizeMake(167, 167), @"AppIconGuest83.5x83.5@2x~ipad.png");
+            writeResized(guestIcon, CGSizeMake(1024, 1024), @"AppIconGuest1024.png");
+            
+            // Overwrite default AppIconGrey files too so grey asset resolution gets guest icon
+            writeResized(guestIcon, CGSizeMake(120, 120), @"AppIconGrey60x60@2x.png");
+            writeResized(guestIcon, CGSizeMake(180, 180), @"AppIconGrey60x60@3x.png");
+            writeResized(guestIcon, CGSizeMake(152, 152), @"AppIconGrey76x76@2x~ipad.png");
+            writeResized(guestIcon, CGSizeMake(167, 167), @"AppIconGrey83.5x83.5@2x~ipad.png");
+            writeResized(guestIcon, CGSizeMake(1024, 1024), @"AppIconGrey1024.png");
+            
+            // Overwrite AppIcon files too
+            writeResized(guestIcon, CGSizeMake(120, 120), @"AppIcon60x60@2x.png");
+            writeResized(guestIcon, CGSizeMake(180, 180), @"AppIcon60x60@3x.png");
+            writeResized(guestIcon, CGSizeMake(152, 152), @"AppIcon76x76@2x~ipad.png");
+            writeResized(guestIcon, CGSizeMake(167, 167), @"AppIcon83.5x83.5@2x~ipad.png");
+        }
+        
+        NSMutableArray *phoneIconFiles = [NSMutableArray arrayWithArray:@[@"AppIconGuest60x60", @"AppIconGrey60x60", @"AppIcon60x60"]];
+        NSMutableArray *padIconFiles = [NSMutableArray arrayWithArray:@[@"AppIconGuest60x60", @"AppIconGuest76x76", @"AppIconGrey60x60", @"AppIconGrey76x76", @"AppIcon60x60", @"AppIcon76x76"]];
+        for (NSString *base in copiedIconBasenames) {
+            if (![phoneIconFiles containsObject:base]) [phoneIconFiles addObject:base];
+            if (![padIconFiles containsObject:base]) [padIconFiles addObject:base];
+        }
+        
+        infoDict[@"CFBundleIconName"] = @"AppIconGrey";
+        infoDict[@"CFBundleIcons"] = [@{
+            @"CFBundlePrimaryIcon": [@{
+                @"CFBundleIconFiles": phoneIconFiles,
+                @"CFBundleIconName": @"AppIconGrey"
+            } mutableCopy]
+        } mutableCopy];
+        infoDict[@"CFBundleIcons~ipad"] = [@{
+            @"CFBundlePrimaryIcon": [@{
+                @"CFBundleIconFiles": padIconFiles,
+                @"CFBundleIconName": @"AppIconGrey"
+            } mutableCopy]
+        } mutableCopy];
+        infoDict[@"CFBundleIconFiles"] = phoneIconFiles;
     }
-    infoDict[@"CFBundleIcons~ipad"][@"CFBundlePrimaryIcon"][@"CFBundleIconFiles"][0] = @"AppIconGrey60x60";
-    infoDict[@"CFBundleIcons~ipad"][@"CFBundlePrimaryIcon"][@"CFBundleIconFiles"][1] = @"AppIconGrey76x76";
+
     [infoDict addEntriesFromDictionary:extraInfoDict];
     
     // reset a executable name so they don't look the same on the log
-    NSURL* appBundlePath = [tmpPayloadPath URLByAppendingPathComponent:@"App.app"];
-    
     NSURL* execFromPath = [appBundlePath URLByAppendingPathComponent:infoDict[@"CFBundleExecutable"]];
     infoDict[@"CFBundleExecutable"] = newBundleName;
     NSURL* execToPath = [appBundlePath URLByAppendingPathComponent:infoDict[@"CFBundleExecutable"]];
@@ -349,15 +528,15 @@
     NSData *plistData = [entitlementXML dataUsingEncoding:NSUTF8StringEncoding];
     NSMutableDictionary *dict = [NSPropertyListSerialization propertyListWithData:plistData
                                                                           options:NSPropertyListMutableContainers
-                                                                           format:nil
+                                                                            format:nil
                                                                             error:error];
-    if(*error) {
+    if(error && *error) {
         return nil;
     }
     
     NSString* teamId = dict[@"com.apple.developer.team-identifier"];
     if(![teamId isKindOfClass:NSString.class]) {
-        *error = [NSError errorWithDomain:@"archiveIPAWithBundleName" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"com.apple.developer.team-identifier is not a string!"}];
+        if(error) *error = [NSError errorWithDomain:@"archiveIPAWithBundleName" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"com.apple.developer.team-identifier is not a string!"}];
         return nil;
     }
     infoDict[@"PrimaryLiveContainerTeamId"] = teamId;
@@ -395,7 +574,7 @@
         NSMutableDictionary* details = [NSMutableDictionary dictionary];
         [details setValue:errorChangeUUID forKey:NSLocalizedDescriptionKey];
         // populate the error object with the details
-        *error = [NSError errorWithDomain:@"world" code:200 userInfo:details];
+        if(error) *error = [NSError errorWithDomain:@"world" code:200 userInfo:details];
         NSLog(@"[LC] %@", errorChangeUUID);
         return nil;
     }
@@ -404,14 +583,14 @@
     [LCUtils loadStoreFrameworksWithError2:error];
     BOOL adhocSignSuccess = [NSClassFromString(@"ZSigner") adhocSignMachOAtPath:execFromPath.path bundleId:infoDict[@"CFBundleIdentifier"] entitlementData:newEntitlementData];
     if (!adhocSignSuccess) {
-        *error = [NSError errorWithDomain:@"archiveIPAWithBundleName" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Failed to adhoc sign main executable!"}];
+        if(error) *error = [NSError errorWithDomain:@"archiveIPAWithBundleName" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Failed to adhoc sign main executable!"}];
         return nil;
     }
     
     // MARK: archive bundle
     
     [manager moveItemAtURL:execFromPath toURL:execToPath error:error];
-    if (*error) {
+    if (error && *error) {
         NSLog(@"[LC] %@", *error);
         return nil;
     }

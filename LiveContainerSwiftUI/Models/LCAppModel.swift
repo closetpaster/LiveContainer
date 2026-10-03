@@ -536,4 +536,60 @@ class LCAppModel: ObservableObject, Hashable {
             return found
         }
     }
+
+    func moveToSharedAppGroupIfNeeded() async throws {
+        if self.uiIsShared {
+            return
+        }
+        
+        try LCPath.ensureAppGroupPaths()
+        
+        var moves: [(URL, URL)] = []
+        if let bundlePath = appInfo.bundlePath() {
+            moves.append((
+                URL(fileURLWithPath: bundlePath),
+                LCPath.lcGroupBundlePath.appendingPathComponent(appInfo.relativeBundlePath)
+            ))
+        }
+        
+        for container in uiContainers {
+            if container.storageBookMark != nil {
+                continue
+            }
+            moves.append((
+                LCPath.dataPath.appendingPathComponent(container.folderName),
+                LCPath.lcGroupDataPath.appendingPathComponent(container.folderName)
+            ))
+        }
+        
+        if let tweakFolder = appInfo.tweakFolder, !tweakFolder.isEmpty {
+            moves.append((
+                LCPath.tweakPath.appendingPathComponent(tweakFolder),
+                LCPath.lcGroupTweakPath.appendingPathComponent(tweakFolder)
+            ))
+        }
+        
+        try LCUtils.moveFilesAtomicallyAfterPreflight(moves)
+        
+        await MainActor.run {
+            let sharedModel = DataManager.shared.model
+            for container in self.uiContainers {
+                if container.storageBookMark != nil {
+                    continue
+                }
+                sharedModel.appDataFolderNames.removeAll(where: { $0 == container.folderName })
+                container.isShared = true
+            }
+            
+            if let tweakFolder = self.appInfo.tweakFolder, !tweakFolder.isEmpty {
+                sharedModel.tweakFolderNames.removeAll(where: { $0 == tweakFolder })
+            }
+            
+            self.appInfo.setBundlePath(LCPath.lcGroupBundlePath.appendingPathComponent(self.appInfo.relativeBundlePath).path)
+            self.appInfo.isShared = true
+            self.uiIsShared = true
+            self.appInfo.containers = self.uiContainers
+            self.appInfo.save()
+        }
+    }
 }

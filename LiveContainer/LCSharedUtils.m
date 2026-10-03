@@ -340,18 +340,16 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
 + (NSBundle*)findBundleWithBundleId:(NSString*)bundleId isSharedAppOut:(bool*)isSharedAppOut {
     NSString *docPath = [NSString stringWithFormat:@"%s/Documents", getenv("LC_HOME_PATH")];
     
-    NSURL *appGroupFolder = nil;
+    NSURL *appGroupFolder = [[LCSharedUtils appGroupPath] URLByAppendingPathComponent:@"LiveContainer"];
     
     NSString *bundlePath = [NSString stringWithFormat:@"%@/Applications/%@", docPath, bundleId];
-    NSBundle *appBundle;
+    NSBundle *appBundle = nil;
     if([NSFileManager.defaultManager fileExistsAtPath:bundlePath]) {
         appBundle = [[NSBundle alloc] initWithPath:bundlePath];
     }
 
     // not found locally, let's look for the app in shared folder
     if (!appBundle) {
-        appGroupFolder = [[LCSharedUtils appGroupPath] URLByAppendingPathComponent:@"LiveContainer"];
-        
         bundlePath = [NSString stringWithFormat:@"%@/Applications/%@", appGroupFolder.path, bundleId];
         if([NSFileManager.defaultManager fileExistsAtPath:bundlePath]) {
             appBundle = [[NSBundle alloc] initWithPath:bundlePath];
@@ -362,6 +360,35 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
     } else {
         *isSharedAppOut = false;
     }
+
+    // fallback: search both directories by matching bundle identifier or folder name
+    if (!appBundle) {
+        NSMutableArray<NSString *> *searchPaths = [NSMutableArray arrayWithObject:[NSString stringWithFormat:@"%@/Applications", docPath]];
+        if (appGroupFolder.path) {
+            [searchPaths addObject:[NSString stringWithFormat:@"%@/Applications", appGroupFolder.path]];
+        }
+        for (NSString *searchPath in searchPaths) {
+            NSArray<NSString *> *apps = [NSFileManager.defaultManager contentsOfDirectoryAtPath:searchPath error:nil];
+            for (NSString *appDir in apps) {
+                NSString *candidate = [searchPath stringByAppendingPathComponent:appDir];
+                NSDictionary *infoPlist = [NSDictionary dictionaryWithContentsOfFile:[candidate stringByAppendingPathComponent:@"Info.plist"]];
+                NSDictionary *lcAppInfo = [NSDictionary dictionaryWithContentsOfFile:[candidate stringByAppendingPathComponent:@"LCAppInfo.plist"]];
+                if ([infoPlist[@"CFBundleIdentifier"] isEqualToString:bundleId] ||
+                    [lcAppInfo[@"LCOrignalBundleIdentifier"] isEqualToString:bundleId] ||
+                    [lcAppInfo[@"CFBundleIdentifier"] isEqualToString:bundleId] ||
+                    [appDir isEqualToString:bundleId] ||
+                    [[appDir stringByDeletingPathExtension] isEqualToString:bundleId]) {
+                    appBundle = [[NSBundle alloc] initWithPath:candidate];
+                    if (appBundle) {
+                        *isSharedAppOut = appGroupFolder.path && [searchPath isEqualToString:[NSString stringWithFormat:@"%@/Applications", appGroupFolder.path]];
+                        break;
+                    }
+                }
+            }
+            if (appBundle) break;
+        }
+    }
+
     return appBundle;
 }
 
@@ -395,7 +422,26 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
     
     NSString* bundleInfoPath = [NSString stringWithFormat:@"%@/Applications/%@/LCAppInfo.plist", appGroupFolder.path, bundleId];
     NSDictionary* infoDict = [NSDictionary dictionaryWithContentsOfFile:bundleInfoPath];
-    return infoDict[@"LCDataUUID"];
+    if (!infoDict) {
+        NSString *docPath = [NSString stringWithFormat:@"%s/Documents", getenv("LC_HOME_PATH")];
+        bundleInfoPath = [NSString stringWithFormat:@"%@/Applications/%@/LCAppInfo.plist", docPath, bundleId];
+        infoDict = [NSDictionary dictionaryWithContentsOfFile:bundleInfoPath];
+    }
+    if (!infoDict) {
+        bool isShared = false;
+        NSBundle *bundle = [self findBundleWithBundleId:bundleId isSharedAppOut:&isShared];
+        if (bundle) {
+            infoDict = [NSDictionary dictionaryWithContentsOfFile:[bundle.bundlePath stringByAppendingPathComponent:@"LCAppInfo.plist"]];
+        }
+    }
+    NSString *dataUUID = infoDict[@"LCDataUUID"];
+    if (!dataUUID) {
+        NSArray *containers = infoDict[@"LCContainers"];
+        if ([containers isKindOfClass:[NSArray class]] && containers.count > 0) {
+            dataUUID = containers[0][@"folderName"];
+        }
+    }
+    return dataUUID;
 }
 
 + (NSArray<NSString*>*)lcUnorderedUrlSchemes {

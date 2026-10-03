@@ -288,11 +288,49 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
 
     // not found locally, let's look for the app in shared folder
     if(!guestAppInfo) {
-        NSURL *appGroupPath = [NSFileManager.defaultManager containerURLForSecurityApplicationGroupIdentifier:[LCSharedUtils appGroupID]];
-        appGroupFolder = [appGroupPath URLByAppendingPathComponent:@"LiveContainer"];
-        bundlePath = [NSString stringWithFormat:@"%@/Applications/%@", appGroupFolder.path, selectedApp];
-        guestAppInfo = [NSDictionary dictionaryWithContentsOfFile:[NSString stringWithFormat:@"%@/LCAppInfo.plist", bundlePath]];
-        isSharedBundle = true;
+        NSURL *appGroupPath = [LCSharedUtils appGroupPath];
+        if (appGroupPath) {
+            appGroupFolder = [appGroupPath URLByAppendingPathComponent:@"LiveContainer"];
+            bundlePath = [NSString stringWithFormat:@"%@/Applications/%@", appGroupFolder.path, selectedApp];
+            guestAppInfo = [NSDictionary dictionaryWithContentsOfFile:[NSString stringWithFormat:@"%@/LCAppInfo.plist", bundlePath]];
+            if (guestAppInfo) {
+                isSharedBundle = true;
+            }
+        }
+    }
+
+    // fallback: search Applications folders for matching bundle identifier or folder name
+    if(!guestAppInfo) {
+        NSURL *appGroupPath = [LCSharedUtils appGroupPath];
+        NSURL *sharedGroupFolder = appGroupPath ? [appGroupPath URLByAppendingPathComponent:@"LiveContainer"] : nil;
+        NSMutableArray<NSString *> *searchDirs = [NSMutableArray arrayWithObject:[NSString stringWithFormat:@"%@/Applications", docPath]];
+        if (sharedGroupFolder.path) {
+            [searchDirs addObject:[NSString stringWithFormat:@"%@/Applications", sharedGroupFolder.path]];
+        }
+        for (NSString *searchDir in searchDirs) {
+            NSArray<NSString *> *subdirs = [fm contentsOfDirectoryAtPath:searchDir error:nil];
+            for (NSString *subdir in subdirs) {
+                NSString *candidatePath = [searchDir stringByAppendingPathComponent:subdir];
+                NSDictionary *candidateInfo = [NSDictionary dictionaryWithContentsOfFile:[NSString stringWithFormat:@"%@/LCAppInfo.plist", candidatePath]];
+                NSDictionary *candidateInfoPlist = [NSDictionary dictionaryWithContentsOfFile:[NSString stringWithFormat:@"%@/Info.plist", candidatePath]];
+                if ([candidateInfo[@"LCOrignalBundleIdentifier"] isEqualToString:selectedApp] ||
+                    [candidateInfoPlist[@"CFBundleIdentifier"] isEqualToString:selectedApp] ||
+                    [candidateInfo[@"CFBundleIdentifier"] isEqualToString:selectedApp] ||
+                    [subdir isEqualToString:selectedApp] ||
+                    [[subdir stringByDeletingPathExtension] isEqualToString:selectedApp]) {
+                    bundlePath = candidatePath;
+                    guestAppInfo = candidateInfo;
+                    if (sharedGroupFolder.path && [searchDir containsString:sharedGroupFolder.path]) {
+                        appGroupFolder = sharedGroupFolder;
+                        isSharedBundle = true;
+                    } else {
+                        isSharedBundle = false;
+                    }
+                    break;
+                }
+            }
+            if (guestAppInfo) break;
+        }
     }
     
     if(!guestAppInfo) {
@@ -329,6 +367,12 @@ static NSString* invokeAppMain(NSString *selectedApp, NSString *selectedContaine
     NSString* dataUUID = selectedContainer;
     if(!dataUUID) {
         dataUUID = guestAppInfo[@"LCDataUUID"];
+    }
+    if(!dataUUID) {
+        NSArray *containers = guestAppInfo[@"LCContainers"];
+        if ([containers isKindOfClass:[NSArray class]] && containers.count > 0) {
+            dataUUID = containers[0][@"folderName"];
+        }
     }
 
     if(dataUUID == nil) {
@@ -698,6 +742,26 @@ int LiveContainerMain(int argc, char *argv[]) {
         if (launchUrl) [lcSharedDefaults removeObjectForKey:@"LCLaunchExtensionLaunchURL"];
     } while (0);
     
+    // Auto-launch dedicated guest app if configured (Info.plist, userDefaults, or shared defaults)
+    if(!selectedApp) {
+        NSString *autoLaunchApp = lcMainBundle.infoDictionary[@"LCAutoLaunchBundleId"]
+            ?: lcMainBundle.infoDictionary[@"LCAutoLaunchGuestBundleId"];
+        if(!autoLaunchApp) {
+            autoLaunchApp = [lcUserDefaults stringForKey:@"LCAutoLaunchBundleId"];
+        }
+        if(!autoLaunchApp && lcAppUrlScheme) {
+            autoLaunchApp = [lcSharedDefaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchBundleId_%@", lcAppUrlScheme]];
+        }
+        if(autoLaunchApp && autoLaunchApp.length > 0) {
+            selectedApp = autoLaunchApp;
+            if(!selectedContainer) {
+                selectedContainer = lcMainBundle.infoDictionary[@"LCAutoLaunchContainer"]
+                    ?: [lcUserDefaults stringForKey:@"LCAutoLaunchContainer"]
+                    ?: [lcSharedDefaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchContainer_%@", lcAppUrlScheme]];
+            }
+        }
+    }
+    
     NSString* lastLaunchDataUUID;
     if(!isLiveProcess) {
         lastLaunchDataUUID = [lcUserDefaults objectForKey:@"lastLaunchDataUUID"];
@@ -751,16 +815,16 @@ int LiveContainerMain(int argc, char *argv[]) {
     if(selectedApp && !isSideStore && !selectedContainer) {
         selectedContainer = [LCSharedUtils findDefaultContainerWithBundleId:selectedApp];
     }
-    NSString* runningLC = [LCSharedUtils getContainerUsingLCSchemeWithFolderName:selectedContainer];
+    NSString* rawRunningLC = [LCSharedUtils getContainerUsingLCSchemeWithFolderName:selectedContainer];
+    NSString* runningLC = rawRunningLC;
+    if([runningLC hasSuffix:@"liveprocess"]) {
+        runningLC = runningLC.stringByDeletingPathExtension;
+    }
     // if another instance is running, we just switch to that one, these should be called after uiapplication initialized
     // however if the running lc is liveprocess and current lc is livecontainer1 we just continue
-    if(selectedApp && runningLC) {
+    if(selectedApp && runningLC && ![runningLC isEqualToString:lcAppUrlScheme]) {
         [lcUserDefaults removeObjectForKey:@"selected"];
         [lcUserDefaults removeObjectForKey:@"selectedContainer"];
-        
-        if([runningLC hasSuffix:@"liveprocess"]) {
-            runningLC = runningLC.stringByDeletingPathExtension;
-        }
         
         NSString* selectedAppBackUp = selectedApp;
         selectedApp = nil;
@@ -817,8 +881,7 @@ int LiveContainerMain(int argc, char *argv[]) {
                 CFRunLoopRun();
             } else {
                 [lcUserDefaults setObject:appError forKey:@"error"];
-                // potentially unrecovable state, exit now
-                return 1;
+                selectedApp = nil;
             }
         }
     }

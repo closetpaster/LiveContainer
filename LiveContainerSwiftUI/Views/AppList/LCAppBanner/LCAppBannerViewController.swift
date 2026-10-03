@@ -174,10 +174,25 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             })
         }
 
+        let createDedicatedAction = UIAction(
+            title: "lc.appBanner.createDedicatedLC".loc,
+            image: UIImage(systemName: "shippingbox.fill")
+        ) { [weak self] _ in
+            Task { [weak self] in
+                await self?.packageDedicatedLiveContainer()
+            }
+        }
+        sectionChildren.append(createDedicatedAction)
+
         let addToHomeScreenMenu = UIMenu(
             title: "lc.appBanner.addToHomeScreen".loc,
             image: UIImage(systemName: "plus.app"),
             children: [
+                UIAction(title: "lc.appBanner.createDedicatedLC".loc, image: UIImage(systemName: "shippingbox.fill")) { [weak self] _ in
+                    Task { [weak self] in
+                        await self?.packageDedicatedLiveContainer()
+                    }
+                },
                 UIAction(title: "lc.appBanner.copyLaunchUrl".loc, image: UIImage(systemName: "link")) { [weak self] _ in
                     self?.copyLaunchUrl()
                 },
@@ -377,5 +392,164 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
         }
         try? FileManager.default.removeItem(at: exportTemporaryDirectory)
         self.exportTemporaryDirectory = nil
+    }
+
+    @MainActor
+    private func presentDismissingIfNeeded(_ viewControllerToPresent: UIViewController, animated: Bool = true) async {
+        if let presented = presentedViewController {
+            await withCheckedContinuation { cont in
+                presented.dismiss(animated: animated) {
+                    cont.resume()
+                }
+            }
+        }
+        guard viewIfLoaded?.window != nil else { return }
+        present(viewControllerToPresent, animated: animated)
+    }
+
+    private func packageDedicatedLiveContainer() async {
+        guard LCUtils.isAppGroupAltStoreLike() else {
+            showError("lc.settings.unsupportedInstallMethod".loc)
+            return
+        }
+
+        let model = configuration.model
+        let appInfo = model.appInfo
+        let displayName = appInfo.displayName() ?? model.displayName
+
+        guard let targetSlot = await promptForSlotSelection() else {
+            return
+        }
+
+        let installMethod = await promptForDedicatedLCInstallMethod(targetSlot: targetSlot, appName: displayName)
+        guard installMethod != 0 else {
+            return
+        }
+
+        do {
+            try await model.moveToSharedAppGroupIfNeeded()
+            try? await model.signApp(force: false)
+
+            var extraInfo: [String: Any] = [:]
+            if let containerName = model.uiSelectedContainer?.folderName {
+                extraInfo["LCAutoLaunchContainer"] = containerName
+            }
+
+            guard let bundlePath = model.appInfo.bundlePath() else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+
+            let packedIpaUrl = try LCUtils.archiveIPA(
+                withBundleName: targetSlot,
+                guestAppBundlePath: bundlePath,
+                guestAppDisplayName: displayName,
+                includingExtraInfoDict: extraInfo
+            )
+
+            if installMethod == 2 {
+                let launchURLStr = packedIpaUrl.absoluteString
+                let bookmark = try packedIpaUrl.bookmarkData(
+                    options: URL.BookmarkCreationOptions(rawValue: 1 << 11),
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                )
+                LCUtils.appGroupUserDefault.set(bookmark, forKey: "LCLaunchExtensionFileBookmark")
+                LCUtils.openSideStore(urlStr: launchURLStr)
+                return
+            }
+
+            let activityVC = UIActivityViewController(activityItems: [packedIpaUrl], applicationActivities: nil)
+            if let popover = activityVC.popoverPresentationController {
+                popover.sourceView = bannerView
+                popover.sourceRect = bannerView.bounds
+            }
+            await presentDismissingIfNeeded(activityVC, animated: true)
+
+        } catch {
+            showError(error.localizedDescription)
+        }
+    }
+
+    private func promptForSlotSelection() async -> String? {
+        guard viewIfLoaded?.window != nil else {
+            return nil
+        }
+
+        let slots = ["LiveContainer2", "LiveContainer3", "LiveContainer4", "LiveContainer5"]
+        let lc2Installed = UIApplication.shared.canOpenURL(URL(string: "livecontainer2://")!)
+        if !lc2Installed {
+            return "LiveContainer2"
+        }
+
+        return await withUnsafeContinuation { continuation in
+            let alert = UIAlertController(
+                title: "lc.appBanner.createDedicatedLCSlotPrompt".loc,
+                message: "lc.settings.multiLCInstallAlertDesc %@".localizeWithFormat(LCUtils.getStoreName()),
+                preferredStyle: .actionSheet
+            )
+
+            for slot in slots {
+                let isInstalled = (slot == "LiveContainer2") ? lc2Installed : UIApplication.shared.canOpenURL(URL(string: "\(slot.lowercased())://")!)
+                let title = isInstalled ? "\(slot) (Installed - Replace)" : slot
+                alert.addAction(UIAlertAction(title: title, style: .default) { [weak alert] _ in
+                    alert?.dismiss(animated: true) {
+                        continuation.resume(returning: slot)
+                    }
+                })
+            }
+
+            alert.addAction(UIAlertAction(title: "lc.common.cancel".loc, style: .cancel) { [weak alert] _ in
+                alert?.dismiss(animated: true) {
+                    continuation.resume(returning: nil)
+                }
+            })
+
+            if let popover = alert.popoverPresentationController {
+                popover.sourceView = self.bannerView
+                popover.sourceRect = self.bannerView.bounds
+            }
+
+            Task { @MainActor in
+                await self.presentDismissingIfNeeded(alert, animated: true)
+            }
+        }
+    }
+
+    private func promptForDedicatedLCInstallMethod(targetSlot: String, appName: String) async -> Int {
+        guard viewIfLoaded?.window != nil else {
+            return 0
+        }
+
+        return await withUnsafeContinuation { continuation in
+            let alert = UIAlertController(
+                title: "lc.appBanner.createDedicatedLC".loc,
+                message: "lc.appBanner.createDedicatedLCDesc %@ %@".localizeWithFormat(appName, targetSlot),
+                preferredStyle: .alert
+            )
+
+            if UserDefaults.sideStoreExist() {
+                alert.addAction(UIAlertAction(title: "lc.settings.multiLCInstall.installWithBuiltInSideStore".loc, style: .default) { [weak alert] _ in
+                    alert?.dismiss(animated: true) {
+                        continuation.resume(returning: 2)
+                    }
+                })
+            }
+
+            alert.addAction(UIAlertAction(title: "lc.appBanner.shareOrExportIPA".loc, style: .default) { [weak alert] _ in
+                alert?.dismiss(animated: true) {
+                    continuation.resume(returning: 1)
+                }
+            })
+
+            alert.addAction(UIAlertAction(title: "lc.common.cancel".loc, style: .cancel) { [weak alert] _ in
+                alert?.dismiss(animated: true) {
+                    continuation.resume(returning: 0)
+                }
+            })
+
+            Task { @MainActor in
+                await self.presentDismissingIfNeeded(alert, animated: true)
+            }
+        }
     }
 }
