@@ -75,6 +75,8 @@
 		<string>livecontainer</string>
 		<string>livecontainer2</string>
 		<string>livecontainer3</string>
+		<string>livecontainer4</string>
+		<string>livecontainer5</string>
 	</array>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>

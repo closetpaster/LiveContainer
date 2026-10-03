@@ -23,7 +23,9 @@ private struct LaunchPriorityLC: Identifiable, Hashable {
 private let knownLiveContainers = [
     LaunchPriorityLC(scheme: "livecontainer", displayName: "LiveContainer"),
     LaunchPriorityLC(scheme: "livecontainer2", displayName: "LiveContainer2"),
-    LaunchPriorityLC(scheme: "livecontainer3", displayName: "LiveContainer3")
+    LaunchPriorityLC(scheme: "livecontainer3", displayName: "LiveContainer3"),
+    LaunchPriorityLC(scheme: "livecontainer4", displayName: "LiveContainer4"),
+    LaunchPriorityLC(scheme: "livecontainer5", displayName: "LiveContainer5")
 ]
 
 struct InstallAnotherLCButton : View {
@@ -84,6 +86,8 @@ struct LCMultiLCManagementView : View, InstallAnotherLCButtonDelegate {
             Section {
                 InstallAnotherLCButton(lcName: "LiveContainer2", delegate: self)
                 InstallAnotherLCButton(lcName: "LiveContainer3", delegate: self)
+                InstallAnotherLCButton(lcName: "LiveContainer4", delegate: self)
+                InstallAnotherLCButton(lcName: "LiveContainer5", delegate: self)
             } header: {
                 Text("lc.settings.multiLCInstall".loc)
             }

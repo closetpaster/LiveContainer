@@ -300,7 +300,7 @@
 
     NSURL *tmpPath = manager.temporaryDirectory;
 
-    NSURL *tmpPayloadPath = [tmpPath URLByAppendingPathComponent:@"LiveContainer2/Payload"];
+    NSURL *tmpPayloadPath = [tmpPath URLByAppendingPathComponent:[NSString stringWithFormat:@"%@/Payload", newBundleName]];
     [manager removeItemAtURL:tmpPayloadPath error:nil];
     [manager createDirectoryAtURL:tmpPayloadPath withIntermediateDirectories:YES attributes:nil error:error];
     if (*error) return nil;
