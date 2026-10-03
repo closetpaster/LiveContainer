@@ -365,6 +365,12 @@
     if (guestAppBundlePath && guestAppBundlePath.length > 0) {
         NSString *displayName = guestAppDisplayName;
         NSDictionary *guestInfoPlist = [NSDictionary dictionaryWithContentsOfFile:[guestAppBundlePath stringByAppendingPathComponent:@"Info.plist"]];
+        if (!guestInfoPlist) {
+            NSData *pData = [NSData dataWithContentsOfFile:[guestAppBundlePath stringByAppendingPathComponent:@"Info.plist"]];
+            if (pData) {
+                guestInfoPlist = [NSPropertyListSerialization propertyListWithData:pData options:0 format:nil error:nil];
+            }
+        }
         NSDictionary *guestLCAppInfo = [NSDictionary dictionaryWithContentsOfFile:[guestAppBundlePath stringByAppendingPathComponent:@"LCAppInfo.plist"]];
         if (!displayName || displayName.length == 0) {
             displayName = guestInfoPlist[@"CFBundleDisplayName"] ?: guestInfoPlist[@"CFBundleName"] ?: newBundleName;
@@ -528,9 +534,8 @@
         // Check if guest app has an Assets.car
         NSString *guestAssetsCar = [guestAppBundlePath stringByAppendingPathComponent:@"Assets.car"];
         BOOL guestHasAssetsCar = [manager fileExistsAtPath:guestAssetsCar];
-        NSDictionary *guestInfoPlist = [NSDictionary dictionaryWithContentsOfFile:[guestAppBundlePath stringByAppendingPathComponent:@"Info.plist"]];
         
-        if (guestHasAssetsCar) {
+        if (guestHasAssetsCar && guestInfoPlist[@"CFBundleIcons"]) {
             // Copy guest app's compiled Assets.car containing its real native icon
             NSURL *dstCar = [appBundlePath URLByAppendingPathComponent:@"Assets.car"];
             [manager removeItemAtURL:dstCar error:nil];
@@ -555,7 +560,7 @@
                 infoDict[@"CFBundleIconFile"] = guestInfoPlist[@"CFBundleIconFile"];
             }
         } else {
-            // Guest app has no Assets.car: Remove LiveContainer's Assets.car so it doesn't hijack the icon!
+            // Remove LiveContainer's Assets.car so it doesn't hijack the icon with AppIconGrey!
             [manager removeItemAtURL:[appBundlePath URLByAppendingPathComponent:@"Assets.car"] error:nil];
             [infoDict removeObjectForKey:@"CFBundleIconName"];
             
