@@ -219,7 +219,7 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
                     title: "lc.appBanner.installInstantWebClip".loc,
                     image: UIImage(systemName: "bolt.badge.automatic.fill") ?? UIImage(systemName: "bolt.fill") ?? UIImage(systemName: "arrow.down.doc.fill")
                 ) { [weak self] _ in
-                    Task { [weak self] in
+                    Task { @MainActor [weak self] in
                         await self?.installWebClipProfile()
                     }
                 },
@@ -227,7 +227,7 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
                     title: "lc.appBanner.shareInstantWebClip".loc,
                     image: UIImage(systemName: "square.and.arrow.up")
                 ) { [weak self] _ in
-                    Task { [weak self] in
+                    Task { @MainActor [weak self] in
                         await self?.shareWebClipProfile()
                     }
                 },
@@ -235,7 +235,7 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
                     self?.copyLaunchUrl()
                 },
                 UIAction(title: "lc.appBanner.saveAppIcon".loc, image: UIImage(systemName: "square.and.arrow.down")) { [weak self] _ in
-                    Task { [weak self] in
+                    Task { @MainActor [weak self] in
                         await self?.saveIcon()
                     }
                 },
@@ -357,6 +357,7 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
         }
     }
 
+    @MainActor
     private func installWebClipProfile() async {
         guard let style = await delegate.promptForGeneratedIconStyle() else {
             return
@@ -389,14 +390,13 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
 
         if let serverURL = LCMobileConfigServer.shared().serveProfileData(data, fileName: fileName, displayName: displayName, iconData: iconData) {
             UIApplication.shared.open(serverURL, options: [:]) { [weak self] success in
-                guard success else {
-                    Task { [weak self] in
-                        await self?.shareWebClipProfile()
+                guard let self else { return }
+                Task { @MainActor in
+                    if success {
+                        await self.showWebClipInstallInstructions()
+                    } else {
+                        await self.shareWebClipProfile()
                     }
-                    return
-                }
-                Task { @MainActor [weak self] in
-                    self?.showWebClipInstallInstructions()
                 }
             }
         } else {
@@ -404,7 +404,8 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
         }
     }
 
-    private func showWebClipInstallInstructions() {
+    @MainActor
+    private func showWebClipInstallInstructions() async {
         let alert = UIAlertController(
             title: "lc.appBanner.webClipInstructionsTitle".loc,
             message: "lc.appBanner.webClipInstructionsMessage".loc,
@@ -418,17 +419,16 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             }
         })
         alert.addAction(UIAlertAction(title: "lc.appBanner.shareInstantWebClip".loc, style: .default) { [weak self] _ in
-            Task { [weak self] in
+            Task { @MainActor [weak self] in
                 await self?.shareWebClipProfile()
             }
         })
         alert.addAction(UIAlertAction(title: "lc.common.ok".loc, style: .cancel, handler: nil))
 
-        Task { @MainActor in
-            await self.presentDismissingIfNeeded(alert, animated: true)
-        }
+        await self.presentDismissingIfNeeded(alert, animated: true)
     }
 
+    @MainActor
     private func shareWebClipProfile() async {
         guard let style = await delegate.promptForGeneratedIconStyle() else {
             return
@@ -483,6 +483,7 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
         }
     }
 
+    @MainActor
     private func saveIcon() async {
         guard let style = await delegate.promptForGeneratedIconStyle() else {
             return
