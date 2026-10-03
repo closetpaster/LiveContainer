@@ -217,7 +217,7 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             children: [
                 UIAction(
                     title: "lc.appBanner.installInstantWebClip".loc,
-                    image: UIImage(systemName: "bolt.badge.automatic.fill") ?? UIImage(systemName: "arrow.down.doc.fill")
+                    image: UIImage(systemName: "bolt.badge.automatic.fill") ?? UIImage(systemName: "bolt.fill") ?? UIImage(systemName: "arrow.down.doc.fill")
                 ) { [weak self] _ in
                     Task { [weak self] in
                         await self?.installWebClipProfile()
@@ -395,8 +395,10 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
                     }
                     return
                 }
+                Task { @MainActor [weak self] in
+                    self?.showWebClipInstallInstructions()
+                }
             }
-            showWebClipInstallInstructions()
         } else {
             await shareWebClipProfile()
         }
@@ -464,7 +466,7 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             try data.write(to: fileURL, options: .atomic)
             exportTemporaryDirectory = temporaryDirectory
 
-            guard viewIfLoaded?.window != nil, presentedViewController == nil else {
+            guard viewIfLoaded?.window != nil else {
                 cleanupExportTemporaryDirectory()
                 return
             }
@@ -503,7 +505,7 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             try imageData.write(to: fileURL, options: .atomic)
             exportTemporaryDirectory = temporaryDirectory
 
-            guard viewIfLoaded?.window != nil, presentedViewController == nil else {
+            guard viewIfLoaded?.window != nil else {
                 cleanupExportTemporaryDirectory()
                 return
             }
@@ -511,7 +513,7 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             let documentPicker = UIDocumentPickerViewController(forExporting: [fileURL], asCopy: true)
             documentPicker.delegate = self
             documentPicker.presentationController?.delegate = self
-            present(documentPicker, animated: true)
+            await presentDismissingIfNeeded(documentPicker, animated: true)
         } catch {
             cleanupExportTemporaryDirectory()
             showError(error.localizedDescription)

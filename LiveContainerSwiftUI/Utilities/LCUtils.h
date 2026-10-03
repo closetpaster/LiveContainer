@@ -71,6 +71,7 @@ uint32_t dyld_get_sdk_version(const struct mach_header* mh);
 
 @interface LCMobileConfigServer : NSObject
 + (instancetype)sharedServer;
++ (instancetype)shared;
 - (nullable NSURL *)serveProfileData:(NSData *)profileData fileName:(NSString *)fileName;
 - (nullable NSURL *)serveProfileData:(NSData *)profileData
                             fileName:(NSString *)fileName

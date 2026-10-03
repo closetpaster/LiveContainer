@@ -1189,7 +1189,7 @@ static BOOL lc_send_all(int fd, const void *buf, size_t len) {
     }
     
     uint16_t port = ntohs(addr.sin_port);
-    if (listen(fd, 16) < 0) {
+    if (listen(fd, 32) < 0) {
         NSLog(@"[LCMobileConfigServer] listen() failed: %s", strerror(errno));
         close(fd);
         [self stop];
@@ -1226,7 +1226,7 @@ static BOOL lc_send_all(int fd, const void *buf, size_t len) {
             setsockopt(clientFd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
 #endif
             struct timeval tv;
-            tv.tv_sec = 3;
+            tv.tv_sec = 5;
             tv.tv_usec = 0;
             setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
             setsockopt(clientFd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -1265,10 +1265,25 @@ static BOOL lc_send_all(int fd, const void *buf, size_t len) {
                         lc_send_all(clientFd, strongSelf.currentIconData.bytes, strongSelf.currentIconData.length);
                     }
                 } else {
-                    const char *resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                    const char *resp = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n";
                     lc_send_all(clientFd, resp, strlen(resp));
                 }
-            } else if ([pathStr hasPrefix:@"/download"] || [pathStr hasSuffix:@".mobileconfig"]) {
+            } else if ([pathStr isEqualToString:@"/help"] || [pathStr isEqualToString:@"/instructions"]) {
+                NSData *htmlData = [strongSelf generateLandingPageHtml];
+                NSString *header = [NSString stringWithFormat:
+                    @"HTTP/1.1 200 OK\r\n"
+                    @"Content-Type: text/html; charset=utf-8\r\n"
+                    @"Content-Length: %lu\r\n"
+                    @"Cache-Control: no-cache, no-store, must-revalidate\r\n"
+                    @"Connection: close\r\n\r\n",
+                    (unsigned long)htmlData.length];
+                
+                NSData *headerData = [header dataUsingEncoding:NSUTF8StringEncoding];
+                lc_send_all(clientFd, headerData.bytes, headerData.length);
+                if (!isHead && htmlData.length > 0) {
+                    lc_send_all(clientFd, htmlData.bytes, htmlData.length);
+                }
+            } else {
                 NSData *data = strongSelf.currentProfileData;
                 NSString *rawName = strongSelf.currentFileName ?: @"profile.mobileconfig";
                 
@@ -1283,6 +1298,9 @@ static BOOL lc_send_all(int fd, const void *buf, size_t len) {
                 }
                 if (asciiSafe.length == 0 || [asciiSafe isEqualToString:@".mobileconfig"]) {
                     asciiSafe = [NSMutableString stringWithString:@"profile.mobileconfig"];
+                }
+                if (![asciiSafe hasSuffix:@".mobileconfig"]) {
+                    [asciiSafe appendString:@".mobileconfig"];
                 }
                 
                 NSString *header = [NSString stringWithFormat:
@@ -1301,21 +1319,6 @@ static BOOL lc_send_all(int fd, const void *buf, size_t len) {
                 if (!isHead && data.length > 0) {
                     lc_send_all(clientFd, data.bytes, data.length);
                 }
-            } else {
-                NSData *htmlData = [strongSelf generateLandingPageHtml];
-                NSString *header = [NSString stringWithFormat:
-                    @"HTTP/1.1 200 OK\r\n"
-                    @"Content-Type: text/html; charset=utf-8\r\n"
-                    @"Content-Length: %lu\r\n"
-                    @"Cache-Control: no-cache, no-store, must-revalidate\r\n"
-                    @"Connection: close\r\n\r\n",
-                    (unsigned long)htmlData.length];
-                
-                NSData *headerData = [header dataUsingEncoding:NSUTF8StringEncoding];
-                lc_send_all(clientFd, headerData.bytes, headerData.length);
-                if (!isHead && htmlData.length > 0) {
-                    lc_send_all(clientFd, htmlData.bytes, htmlData.length);
-                }
             }
             
             shutdown(clientFd, SHUT_WR);
@@ -1327,7 +1330,24 @@ static BOOL lc_send_all(int fd, const void *buf, size_t len) {
         [strongSelf stop];
     });
     
-    return [NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%u/", port]];
+    NSString *rawName = self.currentFileName ?: @"profile.mobileconfig";
+    NSMutableString *asciiSafe = [NSMutableString string];
+    for (NSUInteger i = 0; i < rawName.length; i++) {
+        unichar c = [rawName characterAtIndex:i];
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-') {
+            [asciiSafe appendFormat:@"%C", c];
+        } else {
+            [asciiSafe appendString:@"_"];
+        }
+    }
+    if (asciiSafe.length == 0 || [asciiSafe isEqualToString:@".mobileconfig"]) {
+        asciiSafe = [NSMutableString stringWithString:@"profile.mobileconfig"];
+    }
+    if (![asciiSafe hasSuffix:@".mobileconfig"]) {
+        [asciiSafe appendString:@".mobileconfig"];
+    }
+    
+    return [NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%u/%@", port, asciiSafe]];
 }
 
 - (NSURL *)serveProfileData:(NSData *)profileData fileName:(NSString *)fileName {
