@@ -142,6 +142,22 @@ struct LCAppSettingsView: View {
                 Text("lc.common.container".loc)
             }
             
+            Section {
+                Picker(selection: $model.uiAssignedContainer) {
+                    Text("lc.appBanner.assignNone".loc).tag(Optional<String>(nil))
+                    Text("LiveContainer 1 (Main)").tag(Optional<String>("livecontainer"))
+                    Text("LiveContainer 2").tag(Optional<String>("livecontainer2"))
+                    Text("LiveContainer 3").tag(Optional<String>("livecontainer3"))
+                    Text("LiveContainer 4").tag(Optional<String>("livecontainer4"))
+                    Text("LiveContainer 5").tag(Optional<String>("livecontainer5"))
+                } label: {
+                    Text("lc.appBanner.assignToLiveContainer".loc)
+                }
+            } header: {
+                Text("lc.appBanner.assignToLiveContainer".loc)
+            } footer: {
+                Text("lc.appSettings.assignToLiveContainerDesc".loc)
+            }
             
             Section {
                 Toggle(isOn: $model.uiIsJITNeeded) {

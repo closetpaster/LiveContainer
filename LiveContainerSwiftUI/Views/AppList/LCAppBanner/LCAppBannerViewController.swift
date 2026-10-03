@@ -174,6 +174,38 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             })
         }
 
+        let currentAssigned = model.uiAssignedContainer
+        let assignSchemes: [(title: String, scheme: String?)] = [
+            ("lc.appBanner.assignNone".loc, nil),
+            ("LiveContainer 1 (Main)", "livecontainer"),
+            ("LiveContainer 2", "livecontainer2"),
+            ("LiveContainer 3", "livecontainer3"),
+            ("LiveContainer 4", "livecontainer4"),
+            ("LiveContainer 5", "livecontainer5")
+        ]
+        let assignActions = assignSchemes.map { item in
+            let isSelected: Bool
+            if let targetScheme = item.scheme {
+                isSelected = (currentAssigned == targetScheme) || (targetScheme == "livecontainer" && currentAssigned == "livecontainer1")
+            } else {
+                isSelected = (currentAssigned == nil)
+            }
+            return UIAction(
+                title: item.title,
+                image: isSelected ? UIImage(systemName: "checkmark.circle.fill") : nil,
+                state: isSelected ? .on : .off
+            ) { [weak self] _ in
+                self?.configuration.model.uiAssignedContainer = item.scheme
+                self?.refreshView()
+            }
+        }
+        let assignMenu = UIMenu(
+            title: "lc.appBanner.assignToLiveContainer".loc,
+            image: UIImage(systemName: "arrow.triangle.branch"),
+            children: assignActions
+        )
+        sectionChildren.append(assignMenu)
+
         let createDedicatedAction = UIAction(
             title: "lc.appBanner.createDedicatedLC".loc,
             image: UIImage(systemName: "shippingbox.fill")
@@ -188,9 +220,14 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             title: "lc.appBanner.addToHomeScreen".loc,
             image: UIImage(systemName: "plus.app"),
             children: [
-                UIAction(title: "lc.appBanner.createDedicatedLC".loc, image: UIImage(systemName: "shippingbox.fill")) { [weak self] _ in
+                UIAction(title: "lc.appBanner.installWebClip".loc, image: UIImage(systemName: "arrow.down.doc.fill")) { [weak self] _ in
                     Task { [weak self] in
-                        await self?.packageDedicatedLiveContainer()
+                        await self?.installWebClipProfile()
+                    }
+                },
+                UIAction(title: "lc.appBanner.shareWebClip".loc, image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in
+                    Task { [weak self] in
+                        await self?.shareWebClipProfile()
                     }
                 },
                 UIAction(title: "lc.appBanner.copyLaunchUrl".loc, image: UIImage(systemName: "link")) { [weak self] _ in
@@ -201,9 +238,9 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
                         await self?.saveIcon()
                     }
                 },
-                UIAction(title: "lc.appBanner.createAppClip".loc, image: UIImage(systemName: "appclip")) { [weak self] _ in
+                UIAction(title: "lc.appBanner.createDedicatedLC".loc, image: UIImage(systemName: "shippingbox.fill")) { [weak self] _ in
                     Task { [weak self] in
-                        await self?.createAppClip()
+                        await self?.packageDedicatedLiveContainer()
                     }
                 }
             ]
@@ -311,28 +348,90 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             return
         }
 
+        let scheme = configuration.model.uiAssignedContainer ?? "livecontainer"
         if let folderName = configuration.model.uiSelectedContainer?.folderName {
-            UIPasteboard.general.string = "livecontainer://livecontainer-launch?bundle-name=\(relativeBundlePath)&container-folder-name=\(folderName)"
+            UIPasteboard.general.string = "\(scheme)://livecontainer-launch?bundle-name=\(relativeBundlePath)&container-folder-name=\(folderName)"
         } else {
-            UIPasteboard.general.string = "livecontainer://livecontainer-launch?bundle-name=\(relativeBundlePath)"
+            UIPasteboard.general.string = "\(scheme)://livecontainer-launch?bundle-name=\(relativeBundlePath)"
         }
     }
 
-    private func createAppClip() async {
+    private func installWebClipProfile() async {
         guard let style = await delegate.promptForGeneratedIconStyle() else {
+            return
+        }
+        let model = configuration.model
+        let appInfo = model.appInfo
+        let displayName = appInfo.displayName() ?? model.displayName
+        let rawBundlePath = appInfo.bundlePath() ?? appInfo.relativeBundlePath
+        let containerFolder = model.uiSelectedContainer?.folderName
+        let scheme = model.uiAssignedContainer
+
+        guard let data = LCUtils.generateWebClipProfileData(
+            withBundlePath: rawBundlePath,
+            containerId: containerFolder,
+            targetScheme: scheme,
+            iconStyle: style
+        ) else {
+            showError("Failed to generate WebClip configuration profile.")
+            return
+        }
+
+        let sanitizedName = displayName.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
+        let fileName = "\(sanitizedName).mobileconfig"
+
+        if let serverURL = LCMobileConfigServer.shared().serveProfileData(data, fileName: fileName) {
+            UIApplication.shared.open(serverURL, options: [:], completionHandler: nil)
+        } else {
+            delegate.installMdm(data: data)
+        }
+    }
+
+    private func shareWebClipProfile() async {
+        guard let style = await delegate.promptForGeneratedIconStyle() else {
+            return
+        }
+        let model = configuration.model
+        let appInfo = model.appInfo
+        let displayName = appInfo.displayName() ?? model.displayName
+        let rawBundlePath = appInfo.bundlePath() ?? appInfo.relativeBundlePath
+        let containerFolder = model.uiSelectedContainer?.folderName
+        let scheme = model.uiAssignedContainer
+
+        guard let data = LCUtils.generateWebClipProfileData(
+            withBundlePath: rawBundlePath,
+            containerId: containerFolder,
+            targetScheme: scheme,
+            iconStyle: style
+        ) else {
+            showError("Failed to generate WebClip configuration profile.")
             return
         }
 
         do {
-            guard let profile = configuration.model.appInfo.generateWebClipConfig(
-                withContainerId: configuration.model.uiSelectedContainer?.folderName,
-                iconStyle: style
-            ) else {
-                throw CocoaError(.propertyListWriteInvalid)
+            cleanupExportTemporaryDirectory()
+            let temporaryDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+
+            let sanitizedName = displayName.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
+            let fileURL = temporaryDirectory.appendingPathComponent("\(sanitizedName).mobileconfig")
+            try data.write(to: fileURL, options: .atomic)
+            exportTemporaryDirectory = temporaryDirectory
+
+            guard viewIfLoaded?.window != nil, presentedViewController == nil else {
+                cleanupExportTemporaryDirectory()
+                return
             }
-            let data = try PropertyListSerialization.data(fromPropertyList: profile, format: .xml, options: 0)
-            delegate.installMdm(data: data)
+
+            let activityVC = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+            if let popover = activityVC.popoverPresentationController {
+                popover.sourceView = bannerView
+                popover.sourceRect = bannerView.bounds
+            }
+            await presentDismissingIfNeeded(activityVC, animated: true)
         } catch {
+            cleanupExportTemporaryDirectory()
             showError(error.localizedDescription)
         }
     }

@@ -126,6 +126,20 @@ class LCAppModel: ObservableObject, Hashable {
         }
     }
     
+    @Published var uiAssignedContainer: String? {
+        didSet {
+            let bundleKey = appInfo.relativeBundlePath
+            let containerFolder = uiSelectedContainer?.folderName
+            LCSharedUtils.assignApp(bundleKey, toContainerScheme: uiAssignedContainer, containerFolderName: containerFolder)
+            if let uiAssignedContainer {
+                appInfo.info["LCAssignedContainer"] = uiAssignedContainer
+            } else {
+                appInfo.info.removeObject(forKey: "LCAssignedContainer")
+            }
+            appInfo.save()
+        }
+    }
+    
     public var bundleIdentifier: String {
         get {
             return appInfo.bundleIdentifier() ?? "?"
@@ -193,6 +207,7 @@ class LCAppModel: ObservableObject, Hashable {
         self.uiRemark = appInfo.remark ?? ""
         self.uiIs32bit = appInfo.is32bit
         self.uiIs32bitEmulator = appInfo.is32bitEmulator
+        self.uiAssignedContainer = LCSharedUtils.assignedContainerScheme(forApp: appInfo.relativeBundlePath ?? "")
         for container in uiContainers {
             if container.folderName == uiDefaultDataFolder {
                 self.uiSelectedContainer = container;

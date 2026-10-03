@@ -11,6 +11,10 @@
 #import "../../MultitaskSupport/DecoratedAppSceneViewController.h"
 #import "../../ZSign/zsigner.h"
 #import "LiveContainerSwiftUI-Swift.h"
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <unistd.h>
 
 // make SFSafariView happy and open data: URLs
 @implementation NSURL(hack)
@@ -708,5 +712,310 @@
     return [url bookmarkDataWithOptions:(1<<11) includingResourceValuesForKeys:0 relativeToURL:0 error:0];
 }
 
++ (UIImage *)fullResolutionIconForBundlePath:(NSString *)guestAppBundlePath style:(GeneratedIconStyle)style {
+    if (!guestAppBundlePath || guestAppBundlePath.length == 0) return nil;
+    
+    // 1. Try IconServices extraction (returns high-res SpringBoard icon)
+    UIImage *icon = [UIImage generateIconForBundleURL:[NSURL fileURLWithPath:guestAppBundlePath] style:style hasBorder:NO];
+    if (icon && icon.size.width > 0 && icon.size.height > 0) {
+        return icon;
+    }
+    
+    NSFileManager *manager = [NSFileManager defaultManager];
+    
+    // 2. Check for cached icons
+    NSString *lightPath = [guestAppBundlePath stringByAppendingPathComponent:@"LCAppIconLight.png"];
+    if ([manager fileExistsAtPath:lightPath]) {
+        icon = [UIImage imageWithContentsOfFile:lightPath];
+        if (icon) return icon;
+    }
+    NSString *darkPath = [guestAppBundlePath stringByAppendingPathComponent:@"LCAppIconDark.png"];
+    if ([manager fileExistsAtPath:darkPath]) {
+        icon = [UIImage imageWithContentsOfFile:darkPath];
+        if (icon) return icon;
+    }
+    
+    // 3. Inspect Info.plist CFBundleIcons
+    NSDictionary *infoPlist = [NSDictionary dictionaryWithContentsOfFile:[guestAppBundlePath stringByAppendingPathComponent:@"Info.plist"]];
+    if (!infoPlist) {
+        NSData *pData = [NSData dataWithContentsOfFile:[guestAppBundlePath stringByAppendingPathComponent:@"Info.plist"]];
+        if (pData) {
+            infoPlist = [NSPropertyListSerialization propertyListWithData:pData options:0 format:nil error:nil];
+        }
+    }
+    
+    id primaryIcons = infoPlist[@"CFBundleIcons"][@"CFBundlePrimaryIcon"][@"CFBundleIconFiles"];
+    if (!primaryIcons || ![primaryIcons isKindOfClass:[NSArray class]] || [primaryIcons count] == 0) {
+        primaryIcons = infoPlist[@"CFBundleIconFiles"];
+    }
+    if ([primaryIcons isKindOfClass:[NSArray class]] && [primaryIcons count] > 0) {
+        for (NSString *iconName in [primaryIcons reverseObjectEnumerator]) {
+            NSString *candidate = [guestAppBundlePath stringByAppendingPathComponent:iconName];
+            if ([manager fileExistsAtPath:candidate]) {
+                icon = [UIImage imageWithContentsOfFile:candidate];
+                if (icon) return icon;
+            }
+            for (NSString *ext in @[@"@3x.png", @"@2x.png", @".png", @"~ipad.png"]) {
+                NSString *withExt = [candidate stringByAppendingString:ext];
+                if ([manager fileExistsAtPath:withExt]) {
+                    icon = [UIImage imageWithContentsOfFile:withExt];
+                    if (icon) return icon;
+                }
+            }
+        }
+    }
+    
+    // 4. Fallback: search directory for icon PNGs
+    NSArray<NSString *> *files = [manager contentsOfDirectoryAtPath:guestAppBundlePath error:nil];
+    for (NSString *file in files) {
+        if ([file.pathExtension.lowercaseString isEqualToString:@"png"]) {
+            NSString *lower = file.lowercaseString;
+            if ([lower containsString:@"appicon"] || [lower containsString:@"icon"]) {
+                icon = [UIImage imageWithContentsOfFile:[guestAppBundlePath stringByAppendingPathComponent:file]];
+                if (icon && icon.size.width >= 60) {
+                    return icon;
+                }
+            }
+        }
+    }
+    
+    return icon;
+}
+
++ (NSDictionary *)generateWebClipConfigWithBundlePath:(NSString *)bundlePath
+                                          containerId:(NSString *)containerId
+                                         targetScheme:(NSString *)targetScheme
+                                            iconStyle:(GeneratedIconStyle)iconStyle {
+    if (!bundlePath || bundlePath.length == 0) return nil;
+    
+    NSString *scheme = (targetScheme && targetScheme.length > 0) ? targetScheme : [LCSharedUtils assignedContainerSchemeForApp:bundlePath];
+    if (!scheme || scheme.length == 0) {
+        scheme = @"livecontainer";
+    }
+    scheme = scheme.lowercaseString;
+    if ([scheme isEqualToString:@"livecontainer1"]) {
+        scheme = @"livecontainer";
+    }
+    
+    NSString *bundleName = bundlePath.lastPathComponent;
+    
+    NSDictionary *guestInfoPlist = [NSDictionary dictionaryWithContentsOfFile:[bundlePath stringByAppendingPathComponent:@"Info.plist"]];
+    if (!guestInfoPlist) {
+        NSData *pData = [NSData dataWithContentsOfFile:[bundlePath stringByAppendingPathComponent:@"Info.plist"]];
+        if (pData) {
+            guestInfoPlist = [NSPropertyListSerialization propertyListWithData:pData options:0 format:nil error:nil];
+        }
+    }
+    NSDictionary *guestLCAppInfo = [NSDictionary dictionaryWithContentsOfFile:[bundlePath stringByAppendingPathComponent:@"LCAppInfo.plist"]];
+    NSString *displayName = guestLCAppInfo[@"displayName"]
+        ?: guestInfoPlist[@"CFBundleDisplayName"]
+        ?: guestInfoPlist[@"CFBundleName"]
+        ?: bundleName.stringByDeletingPathExtension;
+    
+    NSString *bundleIdentifier = guestInfoPlist[@"CFBundleIdentifier"]
+        ?: [NSString stringWithFormat:@"com.livecontainer.%@", bundleName.stringByDeletingPathExtension];
+    
+    NSString *appClipUrl;
+    if (containerId && containerId.length > 0) {
+        appClipUrl = [NSString stringWithFormat:@"%@://livecontainer-launch?bundle-name=%@&container-folder-name=%@", scheme, bundleName, containerId];
+    } else {
+        appClipUrl = [NSString stringWithFormat:@"%@://livecontainer-launch?bundle-name=%@", scheme, bundleName];
+    }
+    
+    UIImage *icon = [self fullResolutionIconForBundlePath:bundlePath style:iconStyle];
+    NSData *iconData = icon ? UIImagePNGRepresentation(icon) : nil;
+    
+    NSString *payloadUUID = NSUUID.UUID.UUIDString;
+    NSString *profileUUID = NSUUID.UUID.UUIDString;
+    NSString *webClipId = [NSString stringWithFormat:@"%@.webclip.%@", bundleIdentifier, payloadUUID];
+    
+    NSMutableDictionary *payload = [NSMutableDictionary dictionaryWithDictionary:@{
+        @"FullScreen": @YES,
+        @"IgnoreManifestScope": @YES,
+        @"IsRemovable": @YES,
+        @"Label": displayName,
+        @"PayloadDescription": [NSString stringWithFormat:@"Web Clip for launching %@ via %@", displayName, scheme],
+        @"PayloadDisplayName": displayName,
+        @"PayloadIdentifier": webClipId,
+        @"PayloadType": @"com.apple.webClip.managed",
+        @"PayloadUUID": payloadUUID,
+        @"PayloadVersion": @(1),
+        @"Precomposed": @YES,
+        @"toPayloadOrganization": @"LiveContainer",
+        @"URL": appClipUrl
+    }];
+    if (iconData) {
+        payload[@"Icon"] = iconData;
+    }
+    
+    return @{
+        @"ConsentText": @{
+            @"default": [NSString stringWithFormat:@"This profile installs a Home Screen WebClip icon for %@ that launches directly via %@.", displayName, scheme]
+        },
+        @"PayloadContent": @[payload],
+        @"PayloadDescription": payload[@"PayloadDescription"],
+        @"PayloadDisplayName": displayName,
+        @"PayloadIdentifier": [NSString stringWithFormat:@"%@.profile", webClipId],
+        @"PayloadOrganization": @"LiveContainer",
+        @"PayloadRemovalDisallowed": @NO,
+        @"PayloadType": @"Configuration",
+        @"PayloadUUID": profileUUID,
+        @"PayloadVersion": @(1),
+    };
+}
+
++ (NSData *)generateWebClipProfileDataWithBundlePath:(NSString *)bundlePath
+                                         containerId:(NSString *)containerId
+                                        targetScheme:(NSString *)targetScheme
+                                           iconStyle:(GeneratedIconStyle)iconStyle {
+    NSDictionary *dict = [self generateWebClipConfigWithBundlePath:bundlePath
+                                                       containerId:containerId
+                                                      targetScheme:targetScheme
+                                                         iconStyle:iconStyle];
+    if (!dict) return nil;
+    NSError *error = nil;
+    NSData *data = [NSPropertyListSerialization dataWithPropertyList:dict
+                                                              format:NSPropertyListXMLFormat_v1_0
+                                                             options:0
+                                                               error:&error];
+    if (error) {
+        NSLog(@"[LCUtils] Error serializing webclip profile: %@", error);
+        return nil;
+    }
+    return data;
+}
+
+@end
+
+@interface LCMobileConfigServer () {
+    int _serverFd;
+    dispatch_queue_t _serverQueue;
+}
+@property (nonatomic, copy) NSData *currentProfileData;
+@property (nonatomic, copy) NSString *currentFileName;
+@end
+
+@implementation LCMobileConfigServer
+
++ (instancetype)sharedServer {
+    static LCMobileConfigServer *shared = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        shared = [[LCMobileConfigServer alloc] init];
+    });
+    return shared;
+}
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _serverFd = -1;
+        _serverQueue = dispatch_queue_create("com.livecontainer.mobileconfigserver", DISPATCH_QUEUE_SERIAL);
+    }
+    return self;
+}
+
+- (void)stop {
+    if (_serverFd >= 0) {
+        close(_serverFd);
+        _serverFd = -1;
+    }
+    self.currentProfileData = nil;
+    self.currentFileName = nil;
+}
+
+- (NSURL *)serveProfileData:(NSData *)profileData fileName:(NSString *)fileName {
+    [self stop];
+    
+    if (!profileData || profileData.length == 0) {
+        return nil;
+    }
+    
+    self.currentProfileData = profileData;
+    self.currentFileName = fileName ?: @"profile.mobileconfig";
+    
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        NSLog(@"[LCMobileConfigServer] socket() failed: %s", strerror(errno));
+        return nil;
+    }
+    
+    int opt = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = htons(0);
+    
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        NSLog(@"[LCMobileConfigServer] bind() failed: %s", strerror(errno));
+        close(fd);
+        return nil;
+    }
+    
+    socklen_t addrLen = sizeof(addr);
+    if (getsockname(fd, (struct sockaddr *)&addr, &addrLen) < 0) {
+        NSLog(@"[LCMobileConfigServer] getsockname() failed: %s", strerror(errno));
+        close(fd);
+        return nil;
+    }
+    
+    uint16_t port = ntohs(addr.sin_port);
+    if (listen(fd, 5) < 0) {
+        NSLog(@"[LCMobileConfigServer] listen() failed: %s", strerror(errno));
+        close(fd);
+        return nil;
+    }
+    
+    _serverFd = fd;
+    
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(_serverQueue, ^{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf || strongSelf->_serverFd < 0) return;
+        
+        int sfd = strongSelf->_serverFd;
+        NSDate *expiry = [NSDate dateWithTimeIntervalSinceNow:90.0];
+        while ([expiry timeIntervalSinceNow] > 0 && strongSelf && strongSelf->_serverFd >= 0) {
+            struct pollfd pfd;
+            pfd.fd = sfd;
+            pfd.events = POLLIN;
+            int ready = poll(&pfd, 1, 1000);
+            if (ready > 0 && (pfd.revents & POLLIN)) {
+                struct sockaddr_in clientAddr;
+                socklen_t clientLen = sizeof(clientAddr);
+                int clientFd = accept(sfd, (struct sockaddr *)&clientAddr, &clientLen);
+                if (clientFd >= 0) {
+                    char reqBuf[2048] = {0};
+                    recv(clientFd, reqBuf, sizeof(reqBuf) - 1, 0);
+                    
+                    NSData *data = strongSelf.currentProfileData;
+                    NSString *name = strongSelf.currentFileName ?: @"profile.mobileconfig";
+                    
+                    NSString *httpHeader = [NSString stringWithFormat:
+                        @"HTTP/1.1 200 OK\r\n"
+                        @"Content-Type: application/x-apple-aspen-config\r\n"
+                        @"Content-Disposition: attachment; filename=\"%@\"\r\n"
+                        @"Content-Length: %lu\r\n"
+                        @"Cache-Control: no-cache, no-store, must-revalidate\r\n"
+                        @"Connection: close\r\n\r\n",
+                        name, (unsigned long)data.length];
+                    
+                    NSData *headerData = [httpHeader dataUsingEncoding:NSUTF8StringEncoding];
+                    send(clientFd, headerData.bytes, headerData.length, 0);
+                    send(clientFd, data.bytes, data.length, 0);
+                    close(clientFd);
+                }
+            }
+        }
+        
+        [strongSelf stop];
+    });
+    
+    NSString *safeName = [self.currentFileName stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
+    return [NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%u/%@", port, safeName]];
+}
 
 @end

@@ -17,4 +17,7 @@
 + (NSString*)findDefaultContainerWithBundleId:(NSString*)bundleId;
 + (NSArray<NSString*>*)lcUnorderedUrlSchemes;
 + (NSArray<NSString*>*)lcUrlSchemes;
++ (nullable NSString *)assignedContainerSchemeForApp:(NSString *)bundlePathOrId;
++ (nullable NSString *)assignedAppForContainerScheme:(NSString *)scheme;
++ (void)assignApp:(nullable NSString *)bundlePathOrId toContainerScheme:(nullable NSString *)targetScheme containerFolderName:(nullable NSString *)containerFolderName;
 @end

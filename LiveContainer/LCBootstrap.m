@@ -742,7 +742,64 @@ int LiveContainerMain(int argc, char *argv[]) {
         if (launchUrl) [lcSharedDefaults removeObjectForKey:@"LCLaunchExtensionLaunchURL"];
     } while (0);
     
-    // Auto-launch dedicated guest app if configured (Info.plist, userDefaults, or shared defaults)
+    // 1. Check command line arguments for direct launch URL (e.g. from command line / helper / debugger)
+    if(!selectedApp) {
+        for (int i = 1; i < argc; i++) {
+            NSString *arg = [NSString stringWithUTF8String:argv[i]];
+            if ([arg containsString:@"livecontainer-launch"]) {
+                NSURL *url = [NSURL URLWithString:arg];
+                if (url) {
+                    NSURLComponents *comp = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
+                    for (NSURLQueryItem *item in comp.queryItems) {
+                        if ([item.name isEqualToString:@"bundle-name"] && item.value.length > 0) {
+                            selectedApp = item.value;
+                        } else if ([item.name isEqualToString:@"container-folder-name"] && item.value.length > 0) {
+                            selectedContainer = item.value;
+                        } else if ([item.name isEqualToString:@"open-url"] && item.value.length > 0) {
+                            NSData *decoded = [[NSData alloc] initWithBase64EncodedString:item.value options:0];
+                            if (decoded) {
+                                launchUrl = [[NSString alloc] initWithData:decoded encoding:NSUTF8StringEncoding];
+                            }
+                        }
+                    }
+                    if (selectedApp) break;
+                }
+            }
+        }
+    }
+
+    // 2. Check pending launch in shared defaults (e.g. from extension, deep link, or helper)
+    if(!selectedApp) {
+        NSString *pendingScheme = [lcSharedDefaults stringForKey:@"LCPendingLaunchScheme"];
+        if (!pendingScheme || [pendingScheme isEqualToString:lcAppUrlScheme] || ([lcAppUrlScheme isEqualToString:@"livecontainer"] && [pendingScheme isEqualToString:@"livecontainer1"])) {
+            NSString *pendingApp = [lcSharedDefaults stringForKey:@"LCPendingLaunchBundleID"];
+            NSDate *pendingDate = [lcSharedDefaults objectForKey:@"LCPendingLaunchDate"];
+            if (pendingApp && pendingDate && [pendingDate timeIntervalSinceNow] > -5.0 && [pendingDate timeIntervalSinceNow] <= 1.0) {
+                selectedApp = pendingApp;
+                selectedContainer = [lcSharedDefaults stringForKey:@"LCPendingLaunchContainerName"];
+                launchUrl = [lcSharedDefaults stringForKey:@"LCPendingLaunchURL"];
+                [lcSharedDefaults removeObjectForKey:@"LCPendingLaunchBundleID"];
+                [lcSharedDefaults removeObjectForKey:@"LCPendingLaunchScheme"];
+                [lcSharedDefaults removeObjectForKey:@"LCPendingLaunchContainerName"];
+                [lcSharedDefaults removeObjectForKey:@"LCPendingLaunchURL"];
+                [lcSharedDefaults removeObjectForKey:@"LCPendingLaunchDate"];
+            }
+        }
+    }
+
+    // 3. Check assigned app for this container instance
+    if(!selectedApp && lcAppUrlScheme && lcAppUrlScheme.length > 0) {
+        NSString *assignedApp = [LCSharedUtils assignedAppForContainerScheme:lcAppUrlScheme];
+        if(assignedApp && assignedApp.length > 0 && ![assignedApp isEqualToString:@"ui"]) {
+            selectedApp = assignedApp;
+            if(!selectedContainer) {
+                selectedContainer = [lcSharedDefaults stringForKey:[NSString stringWithFormat:@"LCAssignedContainer_%@", lcAppUrlScheme]]
+                    ?: [lcSharedDefaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchContainer_%@", lcAppUrlScheme]];
+            }
+        }
+    }
+
+    // 4. Auto-launch dedicated guest app if configured (Info.plist, userDefaults, or shared defaults)
     if(!selectedApp) {
         NSString *autoLaunchApp = lcMainBundle.infoDictionary[@"LCAutoLaunchBundleId"]
             ?: lcMainBundle.infoDictionary[@"LCAutoLaunchGuestBundleId"];
@@ -751,8 +808,14 @@ int LiveContainerMain(int argc, char *argv[]) {
         }
         if(!autoLaunchApp && lcAppUrlScheme) {
             autoLaunchApp = [lcSharedDefaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchBundleId_%@", lcAppUrlScheme]];
+            if (!autoLaunchApp && [lcAppUrlScheme isEqualToString:@"livecontainer1"]) {
+                autoLaunchApp = [lcSharedDefaults stringForKey:@"LCAutoLaunchBundleId_livecontainer"];
+            }
+            if (!autoLaunchApp && [lcAppUrlScheme isEqualToString:@"livecontainer"]) {
+                autoLaunchApp = [lcSharedDefaults stringForKey:@"LCAutoLaunchBundleId_livecontainer1"];
+            }
         }
-        if(autoLaunchApp && autoLaunchApp.length > 0) {
+        if(autoLaunchApp && autoLaunchApp.length > 0 && ![autoLaunchApp isEqualToString:@"ui"]) {
             selectedApp = autoLaunchApp;
             if(!selectedContainer) {
                 selectedContainer = lcMainBundle.infoDictionary[@"LCAutoLaunchContainer"]

@@ -52,6 +52,21 @@ uint32_t dyld_get_sdk_version(const struct mach_header* mh);
 + (NSString *)getVersionInfo;
 + (NSString *)liveProcessBundleIdentifier;
 + (NSData*)bookmarkForURL:(NSURL*) url;
++ (nullable UIImage *)fullResolutionIconForBundlePath:(NSString *)guestAppBundlePath style:(GeneratedIconStyle)style;
++ (nullable NSDictionary *)generateWebClipConfigWithBundlePath:(NSString *)bundlePath
+                                                   containerId:(nullable NSString *)containerId
+                                                  targetScheme:(nullable NSString *)targetScheme
+                                                     iconStyle:(GeneratedIconStyle)iconStyle;
++ (nullable NSData *)generateWebClipProfileDataWithBundlePath:(NSString *)bundlePath
+                                                  containerId:(nullable NSString *)containerId
+                                                 targetScheme:(nullable NSString *)targetScheme
+                                                    iconStyle:(GeneratedIconStyle)iconStyle;
+@end
+
+@interface LCMobileConfigServer : NSObject
++ (instancetype)sharedServer;
+- (nullable NSURL *)serveProfileData:(NSData *)profileData fileName:(NSString *)fileName;
+- (void)stop;
 @end
 
 @interface NSUserDefaults(LiveContainer)

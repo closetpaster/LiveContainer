@@ -143,8 +143,29 @@ final class LCAppBannerRootView: UIView {
         versionLabel.textColor = textColor
         remarkLabel.text = model.uiRemark
         remarkLabel.textColor = textColor.withAlphaComponent(0.8)
-        remarkLabel.isHidden = model.uiRemark.isEmpty
-        containerLabel.text = model.uiSelectedContainer?.name ?? "lc.appBanner.noDataFolder".loc
+        let containerName = model.uiSelectedContainer?.name ?? "lc.appBanner.noDataFolder".loc
+        let displayContainerText: String
+        if let assigned = model.uiAssignedContainer {
+            let assignedTitle: String
+            switch assigned {
+            case "livecontainer", "livecontainer1":
+                assignedTitle = "LiveContainer 1"
+            case "livecontainer2":
+                assignedTitle = "LiveContainer 2"
+            case "livecontainer3":
+                assignedTitle = "LiveContainer 3"
+            case "livecontainer4":
+                assignedTitle = "LiveContainer 4"
+            case "livecontainer5":
+                assignedTitle = "LiveContainer 5"
+            default:
+                assignedTitle = assigned
+            }
+            displayContainerText = "[\(assignedTitle)] \(containerName)"
+        } else {
+            displayContainerText = containerName
+        }
+        containerLabel.text = displayContainerText
         containerLabel.textColor = textColor
 
         sharedBadge.isHidden = !model.uiIsShared
@@ -170,7 +191,7 @@ final class LCAppBannerRootView: UIView {
         if !model.uiRemark.isEmpty {
             accessibilityParts.append(model.uiRemark)
         }
-        accessibilityParts.append(model.uiSelectedContainer?.name ?? "lc.appBanner.noDataFolder".loc)
+        accessibilityParts.append(displayContainerText)
         detailStack.accessibilityLabel = accessibilityParts.joined(separator: ", ")
     }
 
