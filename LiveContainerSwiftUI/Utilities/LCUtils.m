@@ -453,6 +453,26 @@
                 guestIcon = [UIImage imageWithContentsOfFile:lightPath];
             }
         }
+        if (!guestIcon) {
+            NSString *darkPath = [guestAppBundlePath stringByAppendingPathComponent:@"LCAppIconDark.png"];
+            if ([manager fileExistsAtPath:darkPath]) {
+                guestIcon = [UIImage imageWithContentsOfFile:darkPath];
+            }
+        }
+        if (!guestIcon) {
+            for (NSString *file in guestFiles) {
+                if ([file.pathExtension.lowercaseString isEqualToString:@"png"]) {
+                    NSString *nameLower = file.lowercaseString;
+                    if ([nameLower containsString:@"appicon"] || [nameLower containsString:@"icon"]) {
+                        UIImage *candidate = [UIImage imageWithContentsOfFile:[guestAppBundlePath stringByAppendingPathComponent:file]];
+                        if (candidate && candidate.size.width >= 60) {
+                            guestIcon = candidate;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         
         void (^writeResized)(UIImage*, CGSize, NSString*) = ^(UIImage *img, CGSize size, NSString *filename) {
             if (!img) return;
@@ -490,29 +510,72 @@
             writeResized(guestIcon, CGSizeMake(180, 180), @"AppIcon60x60@3x.png");
             writeResized(guestIcon, CGSizeMake(152, 152), @"AppIcon76x76@2x~ipad.png");
             writeResized(guestIcon, CGSizeMake(167, 167), @"AppIcon83.5x83.5@2x~ipad.png");
+            
+            // Overwrite legacy Icon naming files
+            writeResized(guestIcon, CGSizeMake(120, 120), @"Icon-60@2x.png");
+            writeResized(guestIcon, CGSizeMake(180, 180), @"Icon-60@3x.png");
+            writeResized(guestIcon, CGSizeMake(152, 152), @"Icon-76@2x.png");
+            writeResized(guestIcon, CGSizeMake(167, 167), @"Icon-83.5@2x.png");
         }
         
-        NSMutableArray *phoneIconFiles = [NSMutableArray arrayWithArray:@[@"AppIconGuest60x60", @"AppIconGrey60x60", @"AppIcon60x60"]];
-        NSMutableArray *padIconFiles = [NSMutableArray arrayWithArray:@[@"AppIconGuest60x60", @"AppIconGuest76x76", @"AppIconGrey60x60", @"AppIconGrey76x76", @"AppIcon60x60", @"AppIcon76x76"]];
+        NSMutableArray *phoneIconFiles = [NSMutableArray arrayWithArray:@[@"AppIconGuest60x60", @"AppIcon60x60", @"Icon-60", @"AppIconGrey60x60"]];
+        NSMutableArray *padIconFiles = [NSMutableArray arrayWithArray:@[@"AppIconGuest60x60", @"AppIconGuest76x76", @"AppIcon60x60", @"AppIcon76x76", @"Icon-76", @"Icon-60", @"AppIconGrey60x60", @"AppIconGrey76x76"]];
         for (NSString *base in copiedIconBasenames) {
             if (![phoneIconFiles containsObject:base]) [phoneIconFiles addObject:base];
             if (![padIconFiles containsObject:base]) [padIconFiles addObject:base];
         }
         
-        infoDict[@"CFBundleIconName"] = @"AppIconGrey";
-        infoDict[@"CFBundleIcons"] = [@{
-            @"CFBundlePrimaryIcon": [@{
-                @"CFBundleIconFiles": phoneIconFiles,
-                @"CFBundleIconName": @"AppIconGrey"
-            } mutableCopy]
-        } mutableCopy];
-        infoDict[@"CFBundleIcons~ipad"] = [@{
-            @"CFBundlePrimaryIcon": [@{
-                @"CFBundleIconFiles": padIconFiles,
-                @"CFBundleIconName": @"AppIconGrey"
-            } mutableCopy]
-        } mutableCopy];
-        infoDict[@"CFBundleIconFiles"] = phoneIconFiles;
+        // Check if guest app has an Assets.car
+        NSString *guestAssetsCar = [guestAppBundlePath stringByAppendingPathComponent:@"Assets.car"];
+        BOOL guestHasAssetsCar = [manager fileExistsAtPath:guestAssetsCar];
+        NSDictionary *guestInfoPlist = [NSDictionary dictionaryWithContentsOfFile:[guestAppBundlePath stringByAppendingPathComponent:@"Info.plist"]];
+        
+        if (guestHasAssetsCar) {
+            // Copy guest app's compiled Assets.car containing its real native icon
+            NSURL *dstCar = [appBundlePath URLByAppendingPathComponent:@"Assets.car"];
+            [manager removeItemAtURL:dstCar error:nil];
+            [manager copyItemAtURL:[NSURL fileURLWithPath:guestAssetsCar] toURL:dstCar error:nil];
+            
+            // Adopt guest app's CFBundleIcons configuration
+            if (guestInfoPlist[@"CFBundleIcons"]) {
+                infoDict[@"CFBundleIcons"] = [guestInfoPlist[@"CFBundleIcons"] mutableCopy];
+            }
+            if (guestInfoPlist[@"CFBundleIcons~ipad"]) {
+                infoDict[@"CFBundleIcons~ipad"] = [guestInfoPlist[@"CFBundleIcons~ipad"] mutableCopy];
+            }
+            if (guestInfoPlist[@"CFBundleIconName"]) {
+                infoDict[@"CFBundleIconName"] = guestInfoPlist[@"CFBundleIconName"];
+            } else {
+                [infoDict removeObjectForKey:@"CFBundleIconName"];
+            }
+            if (guestInfoPlist[@"CFBundleIconFiles"]) {
+                infoDict[@"CFBundleIconFiles"] = [guestInfoPlist[@"CFBundleIconFiles"] mutableCopy];
+            }
+            if (guestInfoPlist[@"CFBundleIconFile"]) {
+                infoDict[@"CFBundleIconFile"] = guestInfoPlist[@"CFBundleIconFile"];
+            }
+        } else {
+            // Guest app has no Assets.car: Remove LiveContainer's Assets.car so it doesn't hijack the icon!
+            [manager removeItemAtURL:[appBundlePath URLByAppendingPathComponent:@"Assets.car"] error:nil];
+            [infoDict removeObjectForKey:@"CFBundleIconName"];
+            
+            infoDict[@"CFBundleIcons"] = [@{
+                @"CFBundlePrimaryIcon": [@{
+                    @"CFBundleIconFiles": phoneIconFiles
+                } mutableCopy]
+            } mutableCopy];
+            infoDict[@"CFBundleIcons~ipad"] = [@{
+                @"CFBundlePrimaryIcon": [@{
+                    @"CFBundleIconFiles": padIconFiles
+                } mutableCopy]
+            } mutableCopy];
+            infoDict[@"CFBundleIconFiles"] = phoneIconFiles;
+            infoDict[@"CFBundleIconFile"] = phoneIconFiles.firstObject;
+        }
+        
+        // Bump CFBundleVersion with timestamp so SpringBoard detects a new version and flushes icon cache
+        long timestamp = (long)[[NSDate date] timeIntervalSince1970];
+        infoDict[@"CFBundleVersion"] = [NSString stringWithFormat:@"%@.%ld", infoDict[@"CFBundleVersion"] ?: @"1", timestamp];
     }
 
     [infoDict addEntriesFromDictionary:extraInfoDict];
