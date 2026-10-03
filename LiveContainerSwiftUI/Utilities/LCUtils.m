@@ -15,6 +15,7 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <unistd.h>
+#include <signal.h>
 
 // make SFSafariView happy and open data: URLs
 @implementation NSURL(hack)
