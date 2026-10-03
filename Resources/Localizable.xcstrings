@@ -35,19 +35,104 @@
         }
       }
     },
+    "lc.appBanner.installInstantWebClip" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Install WebClip Profile (Instant Launch)"
+          }
+        },
+        "zh_CN" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安装 WebClip 描述文件 (免跳转即时启动)"
+          }
+        }
+      }
+    },
+    "lc.appBanner.shareInstantWebClip" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Share / Export WebClip Profile (.mobileconfig)"
+          }
+        },
+        "zh_CN" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分享 / 导出 WebClip 描述文件 (.mobileconfig)"
+          }
+        }
+      }
+    },
+    "lc.appBanner.webClipInstructionsTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WebClip Profile Download"
+          }
+        },
+        "zh_CN" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WebClip 描述文件下载"
+          }
+        }
+      }
+    },
+    "lc.appBanner.webClipInstructionsMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Safari has opened to download the WebClip profile.\n\n1. Tap 'Allow' when prompted in Safari.\n2. Open Settings > Profile Downloaded and tap Install.\n\nIf Safari did not prompt, you can share or export the file directly."
+          }
+        },
+        "zh_CN" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在 Safari 中打开下载页面。\n\n1. 在 Safari 中弹出提示时点击“允许”。\n2. 打开“设置” > “已下载描述文件”并点击安装。\n\n如果 Safari 未弹出提示，您也可以直接分享或导出描述文件。"
+          }
+        }
+      }
+    },
+    "lc.appBanner.openSettings" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Settings"
+          }
+        },
+        "zh_CN" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开设置"
+          }
+        }
+      }
+    },
     "lc.appBanner.installWebClip" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Install WebClip Profile"
+            "value" : "Install WebClip Profile (Instant Launch)"
           }
         },
         "zh_CN" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "安装 WebClip 描述文件"
+            "value" : "安装 WebClip 描述文件 (免跳转即时启动)"
           }
         }
       }
@@ -58,13 +143,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Share WebClip (.mobileconfig)"
+            "value" : "Share / Export WebClip Profile (.mobileconfig)"
           }
         },
         "zh_CN" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "分享 WebClip 描述文件 (.mobileconfig)"
+            "value" : "分享 / 导出 WebClip 描述文件 (.mobileconfig)"
           }
         }
       }

@@ -215,12 +215,18 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             title: "lc.appBanner.addToHomeScreen".loc,
             image: UIImage(systemName: "plus.app"),
             children: [
-                UIAction(title: "lc.appBanner.installWebClip".loc, image: UIImage(systemName: "arrow.down.doc.fill")) { [weak self] _ in
+                UIAction(
+                    title: "lc.appBanner.installInstantWebClip".loc,
+                    image: UIImage(systemName: "bolt.badge.automatic.fill") ?? UIImage(systemName: "arrow.down.doc.fill")
+                ) { [weak self] _ in
                     Task { [weak self] in
                         await self?.installWebClipProfile()
                     }
                 },
-                UIAction(title: "lc.appBanner.shareWebClip".loc, image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in
+                UIAction(
+                    title: "lc.appBanner.shareInstantWebClip".loc,
+                    image: UIImage(systemName: "square.and.arrow.up")
+                ) { [weak self] _ in
                     Task { [weak self] in
                         await self?.shareWebClipProfile()
                     }
@@ -378,11 +384,46 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
 
         let sanitizedName = displayName.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
         let fileName = sanitizedName.isEmpty ? "profile.mobileconfig" : "\(sanitizedName).mobileconfig"
+        let iconImage = appInfo.generateLiveContainerWrappedIcon(with: style)
+        let iconData = iconImage?.pngData()
 
-        if let serverURL = LCMobileConfigServer.shared().serveProfileData(data, fileName: fileName) {
-            UIApplication.shared.open(serverURL, options: [:], completionHandler: nil)
+        if let serverURL = LCMobileConfigServer.shared().serveProfileData(data, fileName: fileName, displayName: displayName, iconData: iconData) {
+            UIApplication.shared.open(serverURL, options: [:]) { [weak self] success in
+                guard success else {
+                    Task { [weak self] in
+                        await self?.shareWebClipProfile()
+                    }
+                    return
+                }
+            }
+            showWebClipInstallInstructions()
         } else {
-            delegate.installMdm(data: data)
+            await shareWebClipProfile()
+        }
+    }
+
+    private func showWebClipInstallInstructions() {
+        let alert = UIAlertController(
+            title: "lc.appBanner.webClipInstructionsTitle".loc,
+            message: "lc.appBanner.webClipInstructionsMessage".loc,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "lc.appBanner.openSettings".loc, style: .default) { _ in
+            if let url = URL(string: "App-prefs:General&path=ManagedConfigurationList"), UIApplication.shared.canOpenURL(url) {
+                UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            } else if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(settingsUrl, options: [:], completionHandler: nil)
+            }
+        })
+        alert.addAction(UIAlertAction(title: "lc.appBanner.shareInstantWebClip".loc, style: .default) { [weak self] _ in
+            Task { [weak self] in
+                await self?.shareWebClipProfile()
+            }
+        })
+        alert.addAction(UIAlertAction(title: "lc.common.ok".loc, style: .cancel, handler: nil))
+
+        Task { @MainActor in
+            await self.presentDismissingIfNeeded(alert, animated: true)
         }
     }
 

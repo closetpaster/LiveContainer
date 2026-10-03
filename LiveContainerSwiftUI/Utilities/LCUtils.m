@@ -912,6 +912,8 @@
 }
 @property (nonatomic, copy) NSData *currentProfileData;
 @property (nonatomic, copy) NSString *currentFileName;
+@property (nonatomic, copy) NSString *currentDisplayName;
+@property (nonatomic, copy) NSData *currentIconData;
 @end
 
 @implementation LCMobileConfigServer
@@ -923,6 +925,10 @@
         shared = [[LCMobileConfigServer alloc] init];
     });
     return shared;
+}
+
++ (instancetype)shared {
+    return [self sharedServer];
 }
 
 - (instancetype)init {
@@ -942,29 +948,211 @@
     }
     self.currentProfileData = nil;
     self.currentFileName = nil;
+    self.currentDisplayName = nil;
+    self.currentIconData = nil;
     if (_bgTask != UIBackgroundTaskInvalid) {
         [[UIApplication sharedApplication] endBackgroundTask:_bgTask];
         _bgTask = UIBackgroundTaskInvalid;
     }
 }
 
-- (NSURL *)serveProfileData:(NSData *)profileData fileName:(NSString *)fileName {
+static BOOL lc_send_all(int fd, const void *buf, size_t len) {
+    const char *p = (const char *)buf;
+    size_t remaining = len;
+    while (remaining > 0) {
+        ssize_t n = send(fd, p, remaining, 0);
+        if (n <= 0) {
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+                usleep(5000);
+                continue;
+            }
+            return NO;
+        }
+        p += n;
+        remaining -= (size_t)n;
+    }
+    return YES;
+}
+
+- (NSData *)generateLandingPageHtml {
+    NSString *rawName = self.currentDisplayName ?: @"App";
+    NSMutableString *escapedName = [NSMutableString string];
+    for (NSUInteger i = 0; i < rawName.length; i++) {
+        unichar c = [rawName characterAtIndex:i];
+        if (c == '&') [escapedName appendString:@"&amp;"];
+        else if (c == '<') [escapedName appendString:@"&lt;"];
+        else if (c == '>') [escapedName appendString:@"&gt;"];
+        else if (c == '"') [escapedName appendString:@"&quot;"];
+        else [escapedName appendFormat:@"%C", c];
+    }
+    
+    NSString *iconImgTag = @"";
+    if (self.currentIconData && self.currentIconData.length > 0) {
+        NSString *b64 = [self.currentIconData base64EncodedStringWithOptions:0];
+        iconImgTag = [NSString stringWithFormat:@"<img src=\"data:image/png;base64,%@\" class=\"app-icon\" alt=\"%@\" />", b64, escapedName];
+    } else {
+        iconImgTag = @"<div class=\"app-icon placeholder\">&#x1F4F1;</div>";
+    }
+    
+    NSString *html = [NSString stringWithFormat:
+        @"<!DOCTYPE html>\n"
+        @"<html lang=\"en\">\n"
+        @"<head>\n"
+        @"<meta charset=\"utf-8\">\n"
+        @"<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">\n"
+        @"<title>Install WebClip - %@</title>\n"
+        @"<style>\n"
+        @"* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }\n"
+        @"body {\n"
+        @"  margin: 0;\n"
+        @"  padding: 32px 20px 48px;\n"
+        @"  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;\n"
+        @"  background-color: #f2f2f7;\n"
+        @"  color: #1c1c1e;\n"
+        @"  display: flex;\n"
+        @"  flex-direction: column;\n"
+        @"  align-items: center;\n"
+        @"  min-height: 100vh;\n"
+        @"  text-align: center;\n"
+        @"}\n"
+        @"@media (prefers-color-scheme: dark) {\n"
+        @"  body { background-color: #000000; color: #f2f2f7; }\n"
+        @"  .card { background-color: #1c1c1e !important; box-shadow: 0 4px 24px rgba(0,0,0,0.6) !important; }\n"
+        @"  .step { background-color: #2c2c2e !important; color: #f2f2f7 !important; }\n"
+        @"  .secondary-btn { background-color: #2c2c2e !important; color: #0a84ff !important; }\n"
+        @"}\n"
+        @".card {\n"
+        @"  background: #ffffff;\n"
+        @"  border-radius: 26px;\n"
+        @"  padding: 32px 24px;\n"
+        @"  max-width: 380px;\n"
+        @"  width: 100%%;\n"
+        @"  box-shadow: 0 10px 35px rgba(0,0,0,0.08);\n"
+        @"  display: flex;\n"
+        @"  flex-direction: column;\n"
+        @"  align-items: center;\n"
+        @"}\n"
+        @".app-icon {\n"
+        @"  width: 96px;\n"
+        @"  height: 96px;\n"
+        @"  border-radius: 22px;\n"
+        @"  box-shadow: 0 6px 20px rgba(0,0,0,0.18);\n"
+        @"  margin-bottom: 16px;\n"
+        @"  object-fit: cover;\n"
+        @"}\n"
+        @".placeholder {\n"
+        @"  background: linear-gradient(135deg, #007aff, #5856d6);\n"
+        @"  display: flex;\n"
+        @"  align-items: center;\n"
+        @"  justify-content: center;\n"
+        @"  font-size: 42px;\n"
+        @"  color: #fff;\n"
+        @"}\n"
+        @"h1 {\n"
+        @"  font-size: 22px;\n"
+        @"  font-weight: 700;\n"
+        @"  margin: 0 0 6px;\n"
+        @"}\n"
+        @".badge {\n"
+        @"  font-size: 13px;\n"
+        @"  font-weight: 600;\n"
+        @"  color: #007aff;\n"
+        @"  background: rgba(0, 122, 255, 0.12);\n"
+        @"  padding: 4px 12px;\n"
+        @"  border-radius: 12px;\n"
+        @"  margin-bottom: 22px;\n"
+        @"  display: inline-block;\n"
+        @"}\n"
+        @".primary-btn {\n"
+        @"  display: block;\n"
+        @"  width: 100%%;\n"
+        @"  padding: 16px 20px;\n"
+        @"  background: #007aff;\n"
+        @"  color: #ffffff !important;\n"
+        @"  font-size: 17px;\n"
+        @"  font-weight: 600;\n"
+        @"  border-radius: 14px;\n"
+        @"  text-decoration: none;\n"
+        @"  margin-bottom: 12px;\n"
+        @"  box-shadow: 0 4px 14px rgba(0, 122, 255, 0.35);\n"
+        @"  transition: transform 0.1s, background-color 0.2s;\n"
+        @"}\n"
+        @".primary-btn:active { transform: scale(0.98); background-color: #0062cc; }\n"
+        @".secondary-btn {\n"
+        @"  display: block;\n"
+        @"  width: 100%%;\n"
+        @"  padding: 13px 20px;\n"
+        @"  background: #e5e5ea;\n"
+        @"  color: #007aff;\n"
+        @"  font-size: 15px;\n"
+        @"  font-weight: 600;\n"
+        @"  border-radius: 14px;\n"
+        @"  text-decoration: none;\n"
+        @"  margin-bottom: 22px;\n"
+        @"}\n"
+        @".steps-box {\n"
+        @"  width: 100%%;\n"
+        @"  text-align: left;\n"
+        @"  margin-top: 6px;\n"
+        @"}\n"
+        @".step {\n"
+        @"  background: #f8f8fa;\n"
+        @"  border-radius: 12px;\n"
+        @"  padding: 12px 14px;\n"
+        @"  margin-bottom: 8px;\n"
+        @"  font-size: 13.5px;\n"
+        @"  line-height: 1.45;\n"
+        @"}\n"
+        @".step strong { color: #007aff; }\n"
+        @"</style>\n"
+        @"</head>\n"
+        @"<body>\n"
+        @"<div class=\"card\">\n"
+        @"  %@\n"
+        @"  <h1>%@</h1>\n"
+        @"  <div class=\"badge\">Instant WebClip Profile</div>\n"
+        @"  <a id=\"install-btn\" href=\"/download\" class=\"primary-btn\">Install WebClip Profile</a>\n"
+        @"  <a href=\"App-prefs:General&path=ManagedConfigurationList\" class=\"secondary-btn\">Open Settings App</a>\n"
+        @"  <div class=\"steps-box\">\n"
+        @"    <div class=\"step\"><strong>1. Tap 'Install WebClip Profile'</strong> above, then tap <strong>Allow</strong> on the system prompt.</div>\n"
+        @"    <div class=\"step\"><strong>2. Open Settings</strong> &gt; <em>Profile Downloaded</em> at the top, then tap <strong>Install</strong>.</div>\n"
+        @"  </div>\n"
+        @"</div>\n"
+        @"<script>\n"
+        @"window.addEventListener('DOMContentLoaded', function() {\n"
+        @"  setTimeout(function() {\n"
+        @"    var btn = document.getElementById('install-btn');\n"
+        @"    if (btn) btn.click();\n"
+        @"  }, 350);\n"
+        @"});\n"
+        @"</script>\n"
+        @"</body>\n"
+        @"</html>\n",
+        escapedName, iconImgTag, escapedName];
+        
+    return [html dataUsingEncoding:NSUTF8StringEncoding];
+}
+
+- (NSURL *)serveProfileData:(NSData *)profileData
+                   fileName:(NSString *)fileName
+                displayName:(NSString *)displayName
+                   iconData:(NSData *)iconData {
     [self stop];
     
     if (!profileData || profileData.length == 0) {
         return nil;
     }
     
-    // Ignore SIGPIPE so closed peer connections do not crash the app
     signal(SIGPIPE, SIG_IGN);
     
-    // Begin background execution assertion so iOS does not suspend the process when Safari opens
     _bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"LCMobileConfigServer" expirationHandler:^{
         [self stop];
     }];
     
     self.currentProfileData = profileData;
     self.currentFileName = fileName ?: @"profile.mobileconfig";
+    self.currentDisplayName = displayName ?: @"App";
+    self.currentIconData = iconData;
     
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -1001,7 +1189,7 @@
     }
     
     uint16_t port = ntohs(addr.sin_port);
-    if (listen(fd, 5) < 0) {
+    if (listen(fd, 16) < 0) {
         NSLog(@"[LCMobileConfigServer] listen() failed: %s", strerror(errno));
         close(fd);
         [self stop];
@@ -1016,72 +1204,134 @@
         if (!strongSelf || strongSelf->_serverFd < 0) return;
         
         int sfd = strongSelf->_serverFd;
-        NSDate *expiry = [NSDate dateWithTimeIntervalSinceNow:90.0];
+        NSDate *expiry = [NSDate dateWithTimeIntervalSinceNow:120.0];
         while ([expiry timeIntervalSinceNow] > 0 && strongSelf && strongSelf->_serverFd >= 0) {
             struct pollfd pfd;
             pfd.fd = sfd;
             pfd.events = POLLIN;
             int ready = poll(&pfd, 1, 1000);
-            if (ready > 0 && (pfd.revents & POLLIN)) {
-                struct sockaddr_in clientAddr;
-                socklen_t clientLen = sizeof(clientAddr);
-                int clientFd = accept(sfd, (struct sockaddr *)&clientAddr, &clientLen);
-                if (clientFd >= 0) {
+            if (ready <= 0 || !(pfd.revents & POLLIN)) {
+                continue;
+            }
+            
+            struct sockaddr_in clientAddr;
+            socklen_t clientLen = sizeof(clientAddr);
+            int clientFd = accept(sfd, (struct sockaddr *)&clientAddr, &clientLen);
+            if (clientFd < 0) {
+                continue;
+            }
+            
 #ifdef SO_NOSIGPIPE
-                    int nosigpipe = 1;
-                    setsockopt(clientFd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
+            int nosigpipe = 1;
+            setsockopt(clientFd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
 #endif
-                    char reqBuf[2048] = {0};
-                    ssize_t n = recv(clientFd, reqBuf, sizeof(reqBuf) - 1, 0);
-                    if (n <= 0) {
-                        close(clientFd);
-                        continue;
-                    }
-                    
-                    BOOL isHead = (strncmp(reqBuf, "HEAD", 4) == 0);
-                    
-                    NSData *data = strongSelf.currentProfileData;
-                    NSString *rawName = strongSelf.currentFileName ?: @"profile.mobileconfig";
-                    
-                    NSMutableString *asciiSafe = [NSMutableString string];
-                    for (NSUInteger i = 0; i < rawName.length; i++) {
-                        unichar c = [rawName characterAtIndex:i];
-                        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-') {
-                            [asciiSafe appendFormat:@"%C", c];
-                        } else {
-                            [asciiSafe appendString:@"_"];
-                        }
-                    }
-                    if (asciiSafe.length == 0 || [asciiSafe isEqualToString:@".mobileconfig"]) {
-                        asciiSafe = [NSMutableString stringWithString:@"profile.mobileconfig"];
-                    }
-                    
-                    NSString *percentName = [rawName stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]] ?: asciiSafe;
-                    
-                    NSString *httpHeader = [NSString stringWithFormat:
+            struct timeval tv;
+            tv.tv_sec = 3;
+            tv.tv_usec = 0;
+            setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            setsockopt(clientFd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+            
+            char reqBuf[4096] = {0};
+            ssize_t n = recv(clientFd, reqBuf, sizeof(reqBuf) - 1, 0);
+            if (n <= 0) {
+                close(clientFd);
+                continue;
+            }
+            
+            char method[16] = {0};
+            char reqPath[512] = {0};
+            sscanf(reqBuf, "%15s %511s", method, reqPath);
+            BOOL isHead = (strcasecmp(method, "HEAD") == 0);
+            
+            NSString *pathStr = [NSString stringWithUTF8String:reqPath] ?: @"/";
+            if ([pathStr containsString:@"?"]) {
+                pathStr = [pathStr componentsSeparatedByString:@"?"].firstObject;
+            }
+            
+            if ([pathStr isEqualToString:@"/favicon.ico"]) {
+                const char *resp = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n";
+                lc_send_all(clientFd, resp, strlen(resp));
+            } else if ([pathStr isEqualToString:@"/apple-touch-icon.png"] || [pathStr isEqualToString:@"/apple-touch-icon-precomposed.png"] || [pathStr isEqualToString:@"/icon.png"]) {
+                if (strongSelf.currentIconData && strongSelf.currentIconData.length > 0) {
+                    NSString *header = [NSString stringWithFormat:
                         @"HTTP/1.1 200 OK\r\n"
-                        @"Content-Type: application/x-apple-aspen-config\r\n"
-                        @"Content-Disposition: attachment; filename=\"%@\"; filename*=UTF-8''%@\r\n"
+                        @"Content-Type: image/png\r\n"
                         @"Content-Length: %lu\r\n"
-                        @"Cache-Control: no-cache, no-store, must-revalidate\r\n"
                         @"Connection: close\r\n\r\n",
-                        asciiSafe, percentName, (unsigned long)data.length];
-                    
-                    NSData *headerData = [httpHeader dataUsingEncoding:NSUTF8StringEncoding];
-                    send(clientFd, headerData.bytes, headerData.length, 0);
-                    if (!isHead && data.length > 0) {
-                        send(clientFd, data.bytes, data.length, 0);
+                        (unsigned long)strongSelf.currentIconData.length];
+                    NSData *headerData = [header dataUsingEncoding:NSUTF8StringEncoding];
+                    lc_send_all(clientFd, headerData.bytes, headerData.length);
+                    if (!isHead) {
+                        lc_send_all(clientFd, strongSelf.currentIconData.bytes, strongSelf.currentIconData.length);
                     }
-                    close(clientFd);
+                } else {
+                    const char *resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                    lc_send_all(clientFd, resp, strlen(resp));
+                }
+            } else if ([pathStr hasPrefix:@"/download"] || [pathStr hasSuffix:@".mobileconfig"]) {
+                NSData *data = strongSelf.currentProfileData;
+                NSString *rawName = strongSelf.currentFileName ?: @"profile.mobileconfig";
+                
+                NSMutableString *asciiSafe = [NSMutableString string];
+                for (NSUInteger i = 0; i < rawName.length; i++) {
+                    unichar c = [rawName characterAtIndex:i];
+                    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-') {
+                        [asciiSafe appendFormat:@"%C", c];
+                    } else {
+                        [asciiSafe appendString:@"_"];
+                    }
+                }
+                if (asciiSafe.length == 0 || [asciiSafe isEqualToString:@".mobileconfig"]) {
+                    asciiSafe = [NSMutableString stringWithString:@"profile.mobileconfig"];
+                }
+                
+                NSString *header = [NSString stringWithFormat:
+                    @"HTTP/1.1 200 OK\r\n"
+                    @"Content-Type: application/x-apple-aspen-config\r\n"
+                    @"Content-Disposition: attachment; filename=\"%@\"\r\n"
+                    @"Content-Length: %lu\r\n"
+                    @"Cache-Control: no-cache, no-store, must-revalidate\r\n"
+                    @"Pragma: no-cache\r\n"
+                    @"Expires: 0\r\n"
+                    @"Connection: close\r\n\r\n",
+                    asciiSafe, (unsigned long)data.length];
+                
+                NSData *headerData = [header dataUsingEncoding:NSUTF8StringEncoding];
+                lc_send_all(clientFd, headerData.bytes, headerData.length);
+                if (!isHead && data.length > 0) {
+                    lc_send_all(clientFd, data.bytes, data.length);
+                }
+            } else {
+                NSData *htmlData = [strongSelf generateLandingPageHtml];
+                NSString *header = [NSString stringWithFormat:
+                    @"HTTP/1.1 200 OK\r\n"
+                    @"Content-Type: text/html; charset=utf-8\r\n"
+                    @"Content-Length: %lu\r\n"
+                    @"Cache-Control: no-cache, no-store, must-revalidate\r\n"
+                    @"Connection: close\r\n\r\n",
+                    (unsigned long)htmlData.length];
+                
+                NSData *headerData = [header dataUsingEncoding:NSUTF8StringEncoding];
+                lc_send_all(clientFd, headerData.bytes, headerData.length);
+                if (!isHead && htmlData.length > 0) {
+                    lc_send_all(clientFd, htmlData.bytes, htmlData.length);
                 }
             }
+            
+            shutdown(clientFd, SHUT_WR);
+            char drain[256];
+            while (recv(clientFd, drain, sizeof(drain), 0) > 0) {}
+            close(clientFd);
         }
         
         [strongSelf stop];
     });
     
-    NSString *safeName = [self.currentFileName stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
-    return [NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%u/%@", port, safeName]];
+    return [NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%u/", port]];
+}
+
+- (NSURL *)serveProfileData:(NSData *)profileData fileName:(NSString *)fileName {
+    return [self serveProfileData:profileData fileName:fileName displayName:nil iconData:nil];
 }
 
 @end
