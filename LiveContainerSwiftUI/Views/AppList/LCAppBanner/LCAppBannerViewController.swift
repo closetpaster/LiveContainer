@@ -379,7 +379,7 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
         let sanitizedName = displayName.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
         let fileName = sanitizedName.isEmpty ? "profile.mobileconfig" : "\(sanitizedName).mobileconfig"
 
-        if let serverURL = LCMobileConfigServer.sharedServer().serveProfileData(data, fileName: fileName) {
+        if let serverURL = LCMobileConfigServer.shared().serveProfileData(data, fileName: fileName) {
             UIApplication.shared.open(serverURL, options: [:], completionHandler: nil)
         } else {
             delegate.installMdm(data: data)
