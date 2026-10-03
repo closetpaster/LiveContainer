@@ -10,6 +10,12 @@ typedef NS_ENUM(NSInteger, Store){
     Unknown = -1
 };
 
+typedef NS_ENUM(NSInteger, GeneratedIconStyle){
+    Original = -1,
+    Light = 0,
+    Dark = 1
+};
+
 void refreshFile(NSString* execPath);
 int dyld_get_program_sdk_version(void);
 uint32_t dyld_get_sdk_version(const struct mach_header* mh);
@@ -80,12 +86,6 @@ uint32_t dyld_get_sdk_version(const struct mach_header* mh);
 - (NSString*)getOrgnizationUnitWithError:(NSError**)error;
 
 @end
-
-typedef NS_ENUM(NSInteger, GeneratedIconStyle){
-    Original = -1,
-    Light = 0,
-    Dark = 1
-};
 
 @interface UIImage(LiveContainer)
 + (instancetype)generateIconForBundleURL:(NSURL*)url style:(GeneratedIconStyle)style hasBorder:(BOOL)hasBorder;
