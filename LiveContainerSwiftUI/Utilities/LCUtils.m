@@ -790,13 +790,18 @@
     if (!bundlePath || bundlePath.length == 0) return nil;
     
     if (![bundlePath isAbsolutePath]) {
-        NSString *absPath = [LCSharedUtils.bundlePath.path stringByAppendingPathComponent:bundlePath];
+        NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+        NSString *docPath = paths.firstObject;
+        NSString *absPath = [[docPath stringByAppendingPathComponent:@"Applications"] stringByAppendingPathComponent:bundlePath];
         if ([[NSFileManager defaultManager] fileExistsAtPath:absPath]) {
             bundlePath = absPath;
         } else {
-            absPath = [LCSharedUtils.appGroupBundlePath.path stringByAppendingPathComponent:bundlePath];
-            if ([[NSFileManager defaultManager] fileExistsAtPath:absPath]) {
-                bundlePath = absPath;
+            NSURL *groupURL = [LCSharedUtils appGroupPath];
+            if (groupURL) {
+                absPath = [[groupURL.path stringByAppendingPathComponent:@"LiveContainer/Applications"] stringByAppendingPathComponent:bundlePath];
+                if ([[NSFileManager defaultManager] fileExistsAtPath:absPath]) {
+                    bundlePath = absPath;
+                }
             }
         }
     }
