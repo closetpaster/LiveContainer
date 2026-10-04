@@ -190,7 +190,7 @@ void LCShowAppNotFoundAlert(NSString* bundleId) {
 }
 
 - (void)executeReturnToLiveContainer {
-    [LCSharedUtils returnToLiveContainerUI];
+    [NSClassFromString(@"LCSharedUtils") returnToLiveContainerUI];
 }
 
 - (void)promptReturnToLiveContainer {
