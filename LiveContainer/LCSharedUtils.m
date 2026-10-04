@@ -187,12 +187,17 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
         }
     }
     if(launchBundleId) {
+        if ([launchBundleId isEqualToString:@"ui"]) {
+            [self returnToLiveContainerUI];
+            return YES;
+        }
         if (openUrl) {
             [lcUserDefaults setObject:openUrl forKey:@"launchAppUrlScheme"];
         }
         
         // Attempt to restart LiveContainer with the selected guest app
         [lcUserDefaults setObject:launchBundleId forKey:@"selected"];
+        [lcUserDefaults setObject:@(NSDate.date.timeIntervalSince1970) forKey:@"selectedTime"];
         [lcUserDefaults setObject:containerFolderName forKey:@"selectedContainer"];
         bool isSharedApp = false;
         NSBundle *appBundle = [self findBundleWithBundleId:launchBundleId isSharedAppOut:&isSharedApp];
@@ -492,10 +497,10 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
     if (scheme && scheme.length > 0) {
         NSString *normScheme = scheme.lowercaseString;
         if ([normScheme isEqualToString:@"livecontainer1"]) normScheme = @"livecontainer";
-        NSString *assigned = [defaults stringForKey:[NSString stringWithFormat:@"LCAssignedApp_%@", normScheme]];
-        if (!assigned && [normScheme isEqualToString:@"livecontainer"]) {
-            assigned = [defaults stringForKey:@"LCAssignedApp_livecontainer1"];
+        if ([normScheme isEqualToString:@"livecontainer"]) {
+            return @"livecontainer";
         }
+        NSString *assigned = [defaults stringForKey:[NSString stringWithFormat:@"LCAssignedApp_%@", normScheme]];
         if (assigned && ([assigned isEqualToString:bundlePathOrId] || [assigned isEqualToString:lastComp] || [[assigned stringByDeletingPathExtension] isEqualToString:[lastComp stringByDeletingPathExtension]])) {
             return normScheme;
         }
@@ -504,16 +509,12 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
     NSArray<NSString *> *allSchemes = [self lcUnorderedUrlSchemes];
     for (NSString *candidateScheme in allSchemes) {
         NSString *norm = candidateScheme.lowercaseString;
-        if ([norm isEqualToString:@"livecontainer1"]) norm = @"livecontainer";
-        NSString *assigned = [defaults stringForKey:[NSString stringWithFormat:@"LCAssignedApp_%@", norm]];
-        if (!assigned && [norm isEqualToString:@"livecontainer"]) {
-            assigned = [defaults stringForKey:@"LCAssignedApp_livecontainer1"];
+        if ([norm isEqualToString:@"livecontainer1"] || [norm isEqualToString:@"livecontainer"]) {
+            continue;
         }
+        NSString *assigned = [defaults stringForKey:[NSString stringWithFormat:@"LCAssignedApp_%@", norm]];
         if (!assigned) {
             assigned = [defaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchBundleId_%@", norm]];
-        }
-        if (!assigned && [norm isEqualToString:@"livecontainer"]) {
-            assigned = [defaults stringForKey:@"LCAutoLaunchBundleId_livecontainer1"];
         }
         if (assigned && ([assigned isEqualToString:bundlePathOrId] || [assigned isEqualToString:lastComp] || [[assigned stringByDeletingPathExtension] isEqualToString:[lastComp stringByDeletingPathExtension]])) {
             return norm;
@@ -527,22 +528,15 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
         return nil;
     }
     NSString *normalizedScheme = scheme.lowercaseString;
+    // The default main LiveContainer (livecontainer / livecontainer1) is the manager/home for all apps.
+    // It must NEVER auto-launch a guest app on a fresh Home Screen tap!
+    if ([normalizedScheme isEqualToString:@"livecontainer"] || [normalizedScheme isEqualToString:@"livecontainer1"]) {
+        return nil;
+    }
     NSUserDefaults *defaults = [NSUserDefaults lcSharedDefaults] ?: [NSUserDefaults standardUserDefaults];
     NSString *app = [defaults stringForKey:[NSString stringWithFormat:@"LCAssignedApp_%@", normalizedScheme]];
-    if (!app && [normalizedScheme isEqualToString:@"livecontainer1"]) {
-        app = [defaults stringForKey:@"LCAssignedApp_livecontainer"];
-    }
-    if (!app && [normalizedScheme isEqualToString:@"livecontainer"]) {
-        app = [defaults stringForKey:@"LCAssignedApp_livecontainer1"];
-    }
     if (!app) {
         app = [defaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchBundleId_%@", normalizedScheme]];
-    }
-    if (!app && [normalizedScheme isEqualToString:@"livecontainer1"]) {
-        app = [defaults stringForKey:@"LCAutoLaunchBundleId_livecontainer"];
-    }
-    if (!app && [normalizedScheme isEqualToString:@"livecontainer"]) {
-        app = [defaults stringForKey:@"LCAutoLaunchBundleId_livecontainer1"];
     }
     return app;
 }
@@ -576,11 +570,22 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
     }
     
     if (normalizedTarget && normalizedTarget.length > 0 && bundleKey && bundleKey.length > 0) {
+        if ([normalizedTarget isEqualToString:@"livecontainer"]) {
+            // Main container must never auto-launch a persistent assigned app!
+            [defaults removeObjectForKey:@"LCAssignedApp_livecontainer"];
+            [defaults removeObjectForKey:@"LCAssignedApp_livecontainer1"];
+            [defaults removeObjectForKey:@"LCAutoLaunchBundleId_livecontainer"];
+            [defaults removeObjectForKey:@"LCAutoLaunchBundleId_livecontainer1"];
+            [defaults removeObjectForKey:@"LCAssignedContainer_livecontainer"];
+            [defaults removeObjectForKey:@"LCAssignedContainer_livecontainer1"];
+            [defaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer"];
+            [defaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer1"];
+            [defaults setObject:@"livecontainer" forKey:[NSString stringWithFormat:@"LCAssignedLC_%@", bundleKey]];
+            return;
+        }
+
         // If another app was previously assigned to this targetScheme, clear its LCAssignedLC key
         NSString *prevAssigned = [defaults stringForKey:[NSString stringWithFormat:@"LCAssignedApp_%@", normalizedTarget]];
-        if (!prevAssigned && [normalizedTarget isEqualToString:@"livecontainer"]) {
-            prevAssigned = [defaults stringForKey:@"LCAssignedApp_livecontainer1"];
-        }
         if (prevAssigned && ![prevAssigned isEqualToString:bundleKey] && ![prevAssigned isEqualToString:bundlePathOrId]) {
             [defaults removeObjectForKey:[NSString stringWithFormat:@"LCAssignedLC_%@", prevAssigned]];
             [defaults removeObjectForKey:[NSString stringWithFormat:@"LCAssignedLC_%@", prevAssigned.lastPathComponent]];
@@ -597,5 +602,44 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
         }
         [defaults setObject:normalizedTarget forKey:[NSString stringWithFormat:@"LCAssignedLC_%@", bundleKey]];
     }
+}
+
++ (void)returnToLiveContainerUI {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSUserDefaults *sharedDefaults = [NSUserDefaults lcSharedDefaults] ?: [[NSUserDefaults alloc] initWithSuiteName:[LCSharedUtils appGroupID]];
+    
+    [defaults removeObjectForKey:@"selected"];
+    [defaults removeObjectForKey:@"selectedContainer"];
+    [defaults removeObjectForKey:@"selectedTime"];
+    [defaults removeObjectForKey:@"launchAppUrlScheme"];
+    [defaults removeObjectForKey:@"LCOpenSideStore"];
+    
+    // Clear all assigned & auto-launch keys for default main container
+    [sharedDefaults removeObjectForKey:@"LCAssignedApp_livecontainer"];
+    [sharedDefaults removeObjectForKey:@"LCAssignedApp_livecontainer1"];
+    [sharedDefaults removeObjectForKey:@"LCAutoLaunchBundleId_livecontainer"];
+    [sharedDefaults removeObjectForKey:@"LCAutoLaunchBundleId_livecontainer1"];
+    [sharedDefaults removeObjectForKey:@"LCAssignedContainer_livecontainer"];
+    [sharedDefaults removeObjectForKey:@"LCAssignedContainer_livecontainer1"];
+    [sharedDefaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer"];
+    [sharedDefaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer1"];
+    
+    // Clear any pending launch tasks
+    [sharedDefaults removeObjectForKey:@"LCPendingLaunchBundleID"];
+    [sharedDefaults removeObjectForKey:@"LCPendingLaunchScheme"];
+    [sharedDefaults removeObjectForKey:@"LCPendingLaunchContainerName"];
+    [sharedDefaults removeObjectForKey:@"LCPendingLaunchURL"];
+    [sharedDefaults removeObjectForKey:@"LCPendingLaunchDate"];
+    
+    [sharedDefaults removeObjectForKey:@"LCLaunchExtensionBundleID"];
+    [sharedDefaults removeObjectForKey:@"LCLaunchExtensionScheme"];
+    [sharedDefaults removeObjectForKey:@"LCLaunchExtensionContainerName"];
+    [sharedDefaults removeObjectForKey:@"LCLaunchExtensionLaunchURL"];
+    [sharedDefaults removeObjectForKey:@"LCLaunchExtensionLaunchDate"];
+    
+    [defaults synchronize];
+    [sharedDefaults synchronize];
+    
+    [self launchToGuestAppWithClassicMode:0];
 }
 @end

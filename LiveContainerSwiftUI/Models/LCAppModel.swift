@@ -350,6 +350,7 @@ class LCAppModel: ObservableObject, Hashable {
         } else {
             UserDefaults.standard.set(self.appInfo.relativeBundlePath, forKey: "selected")
         }
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "selectedTime")
         if let urlStr {
             UserDefaults.standard.setValue(urlStr, forKey: "launchAppUrlScheme")
         }

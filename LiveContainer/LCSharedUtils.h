@@ -20,4 +20,5 @@
 + (NSString * _Nullable)assignedContainerSchemeForApp:(NSString * _Nullable)bundlePathOrId;
 + (NSString * _Nullable)assignedAppForContainerScheme:(NSString * _Nullable)scheme;
 + (void)assignApp:(NSString * _Nullable)bundlePathOrId toContainerScheme:(NSString * _Nullable)targetScheme containerFolderName:(NSString * _Nullable)containerFolderName;
++ (void)returnToLiveContainerUI;
 @end

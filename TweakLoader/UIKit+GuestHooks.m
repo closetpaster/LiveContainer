@@ -19,6 +19,7 @@ static void UIKitGuestHooksInit() {
     swizzle(UIApplication.class, @selector(setDelegate:), @selector(hook_setDelegate:));
     swizzle(UIScene.class, @selector(scene:didReceiveActions:fromTransitionContext:), @selector(hook_scene:didReceiveActions:fromTransitionContext:));
     swizzle(UIScene.class, @selector(openURL:options:completionHandler:), @selector(hook_openURL:options:completionHandler:));
+    swizzle(UIApplication.class, @selector(sendEvent:), @selector(hook_sendEvent:));
     NSInteger LCOrientationLockDirection = [NSUserDefaults.guestAppInfo[@"LCOrientationLock"] integerValue];
     if(LCOrientationLockDirection != 0 && [UIDevice.currentDevice userInterfaceIdiom] == UIUserInterfaceIdiomPhone) {
         switch (LCOrientationLockDirection) {
@@ -155,6 +156,109 @@ void LCShowAppNotFoundAlert(NSString* bundleId) {
     LCShowAlert([@"lc.guestTweak.error.bundleNotFound %@" localizeWithFormat: bundleId]);
 }
 
+@interface LCReturnToLCHandler : NSObject <UIGestureRecognizerDelegate>
+@property (nonatomic, assign) BOOL isAlertPresented;
++ (instancetype)sharedHandler;
+- (void)promptReturnToLiveContainer;
+- (void)handleThreeFingerTap:(UITapGestureRecognizer *)gesture;
+- (void)executeReturnToLiveContainer;
+@end
+
+@implementation LCReturnToLCHandler
+
++ (instancetype)sharedHandler {
+    static LCReturnToLCHandler *instance = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        instance = [[LCReturnToLCHandler alloc] init];
+    });
+    return instance;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
+    return YES;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
+    return YES;
+}
+
+- (void)handleThreeFingerTap:(UITapGestureRecognizer *)gesture {
+    if (gesture.state == UIGestureRecognizerStateRecognized || gesture.state == UIGestureRecognizerStateEnded) {
+        [self promptReturnToLiveContainer];
+    }
+}
+
+- (void)executeReturnToLiveContainer {
+    [LCSharedUtils returnToLiveContainerUI];
+}
+
+- (void)promptReturnToLiveContainer {
+    if (self.isAlertPresented) {
+        return;
+    }
+    
+    if ([NSUserDefaults.lcUserDefaults boolForKey:@"LCSwitchAppWithoutAsking"]) {
+        [self executeReturnToLiveContainer];
+        return;
+    }
+    
+    self.isAlertPresented = YES;
+    
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSString *title = @"LiveContainer";
+        NSString *message = @"Do you want to return to the LiveContainer app list?";
+        NSString *locMsg = @"lc.guestTweak.returnToLiveContainerTip".loc;
+        if (locMsg && ![locMsg isEqualToString:@"lc.guestTweak.returnToLiveContainerTip"]) {
+            message = locMsg;
+        }
+        
+        UIWindow *window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+        
+        __weak typeof(self) weakSelf = self;
+        UIAlertAction *returnAction = [UIAlertAction actionWithTitle:@"Return to LiveContainer" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+            weakSelf.isAlertPresented = NO;
+            window.windowScene = nil;
+            [weakSelf executeReturnToLiveContainer];
+        }];
+        [alert addAction:returnAction];
+        
+        UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"lc.common.cancel".loc style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
+            weakSelf.isAlertPresented = NO;
+            window.windowScene = nil;
+        }];
+        [alert addAction:cancelAction];
+        
+        window.rootViewController = [UIViewController new];
+        window.windowLevel = UIApplication.sharedApplication.windows.lastObject.windowLevel + 1;
+        window.windowScene = (id)UIApplication.sharedApplication.connectedScenes.anyObject;
+        [window makeKeyAndVisible];
+        [window.rootViewController presentViewController:alert animated:YES completion:nil];
+        objc_setAssociatedObject(alert, @"window", window, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    });
+}
+@end
+
+static void setupWindowGestures(UIWindow *window) {
+    if (!window || ![window isKindOfClass:[UIWindow class]]) return;
+    for (UIGestureRecognizer *gr in window.gestureRecognizers) {
+        if ([gr.name isEqualToString:@"LCReturnGesture"]) {
+            return;
+        }
+    }
+    UITapGestureRecognizer *threeFingerTap = [[UITapGestureRecognizer alloc] initWithTarget:[LCReturnToLCHandler sharedHandler] action:@selector(handleThreeFingerTap:)];
+    threeFingerTap.numberOfTouchesRequired = 3;
+    threeFingerTap.numberOfTapsRequired = 1;
+    threeFingerTap.cancelsTouchesInView = NO;
+    threeFingerTap.delaysTouchesBegan = NO;
+    threeFingerTap.delaysTouchesEnded = NO;
+    threeFingerTap.delegate = [LCReturnToLCHandler sharedHandler];
+    threeFingerTap.name = @"LCReturnGesture";
+    [window addGestureRecognizer:threeFingerTap];
+}
+
+
 void openUniversalLink(NSString* decodedUrl) {
     NSURL* urlToOpen = [NSURL URLWithString: decodedUrl];
     if(![urlToOpen.scheme isEqualToString:@"https"] && ![urlToOpen.scheme isEqualToString:@"http"]) {
@@ -245,6 +349,7 @@ void LCOpenSideStoreURL(NSURL* sidestoreUrl) {
     if ([NSUserDefaults.lcUserDefaults boolForKey:@"LCSwitchAppWithoutAsking"]) {
         [NSUserDefaults.lcUserDefaults setObject:sidestoreUrl.absoluteString forKey:@"launchAppUrlScheme"];
         [NSUserDefaults.lcUserDefaults setObject:@"builtinSideStore" forKey:@"selected"];
+        [NSUserDefaults.lcUserDefaults setObject:@(NSDate.date.timeIntervalSince1970) forKey:@"selectedTime"];
         [NSClassFromString(@"LCSharedUtils") launchToGuestAppWithClassicMode:0];
     }
     NSString *message = [@"lc.guestTweak.appSwitchTip %@" localizeWithFormat:@"SideStore"];
@@ -253,6 +358,7 @@ void LCOpenSideStoreURL(NSURL* sidestoreUrl) {
     UIAlertAction* okAction = [UIAlertAction actionWithTitle:@"lc.common.ok".loc style:UIAlertActionStyleDefault handler:^(UIAlertAction * action) {
         [NSUserDefaults.lcUserDefaults setObject:sidestoreUrl.absoluteString forKey:@"launchAppUrlScheme"];
         [NSUserDefaults.lcUserDefaults setObject:@"builtinSideStore" forKey:@"selected"];
+        [NSUserDefaults.lcUserDefaults setObject:@(NSDate.date.timeIntervalSince1970) forKey:@"selectedTime"];
         [NSClassFromString(@"LCSharedUtils") launchToGuestAppWithClassicMode:0];
     }];
     [alert addAction:okAction];
@@ -457,7 +563,7 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
         
         // launch to LiveContainerUI
         if([bundleName isEqualToString:@"ui"]) {
-            LCShowSwitchAppConfirmation(url, @"LiveContainer", false);
+            [[LCReturnToLCHandler sharedHandler] promptReturnToLiveContainer];
             return LCControlAppURLHandlingStop;
         }
         
@@ -661,6 +767,19 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
     }
 }
 
+- (void)hook_sendEvent:(UIEvent *)event {
+    if (event.type == UIEventTypeMotion && event.subtype == UIEventSubtypeMotionShake) {
+        [[LCReturnToLCHandler sharedHandler] promptReturnToLiveContainer];
+    } else if (event.type == UIEventTypeTouches) {
+        NSSet *allTouches = event.allTouches;
+        UITouch *touch = allTouches.anyObject;
+        if (touch && touch.window) {
+            setupWindowGestures(touch.window);
+        }
+    }
+    [self hook_sendEvent:event];
+}
+
 @end
 
 // Handler for SceneDelegate
@@ -754,10 +873,12 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
 
 - (void)hook_makeKeyAndVisible {
     [self updateWindowScene];
+    setupWindowGestures(self);
     [self hook_makeKeyAndVisible];
 }
 - (void)hook_makeKeyWindow {
     [self updateWindowScene];
+    setupWindowGestures(self);
     [self hook_makeKeyWindow];
 }
 - (void)hook_resignKeyWindow {
@@ -766,6 +887,9 @@ static LCControlAppURLHandling LCHandleControlAppURL(NSURL *url, NSString** modi
 }
 - (void)hook_setHidden:(BOOL)hidden {
     [self updateWindowScene];
+    if (!hidden) {
+        setupWindowGestures(self);
+    }
     [self hook_setHidden:hidden];
 }
 - (void)updateWindowScene {

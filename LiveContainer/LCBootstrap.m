@@ -716,9 +716,52 @@ int LiveContainerMain(int argc, char *argv[]) {
     isLiveProcess = [lcAppUrlScheme isEqualToString:@"liveprocess"];
     setenv("LC_HOME_PATH", getenv("HOME"), 0);
 
+    BOOL isMainContainer = [lcAppUrlScheme isEqualToString:@"livecontainer"] || [lcAppUrlScheme isEqualToString:@"livecontainer1"];
+    if (isMainContainer) {
+        // Main Container Fresh Launch:
+        // The default main LiveContainer is the manager/home for all apps. It must NEVER auto-launch
+        // a guest app on a fresh Home Screen tap. Wipe any lingering persistent auto-launch/assigned keys.
+        [lcSharedDefaults removeObjectForKey:@"LCAssignedApp_livecontainer"];
+        [lcSharedDefaults removeObjectForKey:@"LCAssignedApp_livecontainer1"];
+        [lcSharedDefaults removeObjectForKey:@"LCAutoLaunchBundleId_livecontainer"];
+        [lcSharedDefaults removeObjectForKey:@"LCAutoLaunchBundleId_livecontainer1"];
+        [lcSharedDefaults removeObjectForKey:@"LCAssignedContainer_livecontainer"];
+        [lcSharedDefaults removeObjectForKey:@"LCAssignedContainer_livecontainer1"];
+        [lcSharedDefaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer"];
+        [lcSharedDefaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer1"];
+        [lcSharedDefaults synchronize];
+    }
+
     NSString *selectedApp = [lcUserDefaults stringForKey:@"selected"];
     NSString *selectedContainer = [lcUserDefaults stringForKey:@"selectedContainer"];
     NSString *launchUrl = nil;
+
+    if(selectedApp) {
+        if([selectedApp isEqualToString:@"ui"]) {
+            selectedApp = nil;
+            selectedContainer = nil;
+            [lcUserDefaults removeObjectForKey:@"selected"];
+            [lcUserDefaults removeObjectForKey:@"selectedContainer"];
+            [lcUserDefaults removeObjectForKey:@"selectedTime"];
+        } else {
+            NSNumber *selectedTimeNum = [lcUserDefaults objectForKey:@"selectedTime"];
+            NSTimeInterval selectedTime = [selectedTimeNum doubleValue];
+            NSTimeInterval now = NSDate.date.timeIntervalSince1970;
+            // If selectedTime is missing or older than 10 seconds, it's a lingering key from a previous session/crash!
+            if(selectedTimeNum == nil || selectedTime <= 0 || (now - selectedTime) > 10.0 || (selectedTime - now) > 2.0) {
+                NSLog(@"[LCBootstrap] Wiping lingering selectedApp: %@", selectedApp);
+                selectedApp = nil;
+                selectedContainer = nil;
+                [lcUserDefaults removeObjectForKey:@"selected"];
+                [lcUserDefaults removeObjectForKey:@"selectedContainer"];
+                [lcUserDefaults removeObjectForKey:@"selectedTime"];
+                [lcUserDefaults removeObjectForKey:@"launchAppUrlScheme"];
+            } else {
+                [lcUserDefaults removeObjectForKey:@"selectedTime"];
+            }
+        }
+    }
+
     do {
         if(selectedApp) {
             launchUrl = [lcUserDefaults stringForKey:@"launchAppUrlScheme"];
@@ -787,34 +830,22 @@ int LiveContainerMain(int argc, char *argv[]) {
         }
     }
 
-    // 3. Check assigned app for this container instance
-    if(!selectedApp && lcAppUrlScheme && lcAppUrlScheme.length > 0) {
+    // 3. Check assigned app for this container instance (only for secondary containers like livecontainer2, livecontainer3...)
+    if(!selectedApp && !isMainContainer && lcAppUrlScheme && lcAppUrlScheme.length > 0) {
         NSString *assignedApp = [LCSharedUtils assignedAppForContainerScheme:lcAppUrlScheme];
         if(assignedApp && assignedApp.length > 0 && ![assignedApp isEqualToString:@"ui"]) {
             selectedApp = assignedApp;
             if(!selectedContainer) {
                 selectedContainer = [lcSharedDefaults stringForKey:[NSString stringWithFormat:@"LCAssignedContainer_%@", lcAppUrlScheme]];
-                if (!selectedContainer && [lcAppUrlScheme isEqualToString:@"livecontainer1"]) {
-                    selectedContainer = [lcSharedDefaults stringForKey:@"LCAssignedContainer_livecontainer"];
-                }
-                if (!selectedContainer && [lcAppUrlScheme isEqualToString:@"livecontainer"]) {
-                    selectedContainer = [lcSharedDefaults stringForKey:@"LCAssignedContainer_livecontainer1"];
-                }
                 if (!selectedContainer) {
                     selectedContainer = [lcSharedDefaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchContainer_%@", lcAppUrlScheme]];
-                }
-                if (!selectedContainer && [lcAppUrlScheme isEqualToString:@"livecontainer1"]) {
-                    selectedContainer = [lcSharedDefaults stringForKey:@"LCAutoLaunchContainer_livecontainer"];
-                }
-                if (!selectedContainer && [lcAppUrlScheme isEqualToString:@"livecontainer"]) {
-                    selectedContainer = [lcSharedDefaults stringForKey:@"LCAutoLaunchContainer_livecontainer1"];
                 }
             }
         }
     }
 
-    // 4. Auto-launch dedicated guest app if configured (Info.plist, userDefaults, or shared defaults)
-    if(!selectedApp) {
+    // 4. Auto-launch dedicated guest app if configured (only for secondary containers or custom dedicated IPAs)
+    if(!selectedApp && !isMainContainer) {
         NSString *autoLaunchApp = lcMainBundle.infoDictionary[@"LCAutoLaunchBundleId"]
             ?: lcMainBundle.infoDictionary[@"LCAutoLaunchGuestBundleId"];
         if(!autoLaunchApp) {
@@ -822,12 +853,6 @@ int LiveContainerMain(int argc, char *argv[]) {
         }
         if(!autoLaunchApp && lcAppUrlScheme) {
             autoLaunchApp = [lcSharedDefaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchBundleId_%@", lcAppUrlScheme]];
-            if (!autoLaunchApp && [lcAppUrlScheme isEqualToString:@"livecontainer1"]) {
-                autoLaunchApp = [lcSharedDefaults stringForKey:@"LCAutoLaunchBundleId_livecontainer"];
-            }
-            if (!autoLaunchApp && [lcAppUrlScheme isEqualToString:@"livecontainer"]) {
-                autoLaunchApp = [lcSharedDefaults stringForKey:@"LCAutoLaunchBundleId_livecontainer1"];
-            }
         }
         if(autoLaunchApp && autoLaunchApp.length > 0 && ![autoLaunchApp isEqualToString:@"ui"]) {
             selectedApp = autoLaunchApp;
@@ -873,6 +898,7 @@ int LiveContainerMain(int argc, char *argv[]) {
         selectedApp = nil;
         [lcUserDefaults removeObjectForKey:@"selected"];
         [lcUserDefaults removeObjectForKey:@"selectedContainer"];
+        [lcUserDefaults removeObjectForKey:@"selectedTime"];
     }
     
     if(isLiveProcess) {
@@ -942,6 +968,7 @@ int LiveContainerMain(int argc, char *argv[]) {
     if (selectedApp || isSideStore) {
         [lcUserDefaults removeObjectForKey:@"selected"];
         [lcUserDefaults removeObjectForKey:@"selectedContainer"];
+        [lcUserDefaults removeObjectForKey:@"selectedTime"];
         if(launchUrl) {
             lcLaunchURL = launchUrl;
             [lcUserDefaults removeObjectForKey:@"launchAppUrlScheme"];
