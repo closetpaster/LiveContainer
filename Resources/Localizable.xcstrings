@@ -92,13 +92,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Safari has opened to download the WebClip profile.\n\n1. Tap 'Allow' when prompted in Safari.\n2. Open Settings > Profile Downloaded and tap Install.\n\nIf Safari did not prompt, you can share or export the file directly."
+            "value" : "Safari has opened to download the WebClip profile. The link has also been copied to your clipboard.\n\n1. Tap 'Allow' in Safari when prompted.\n2. Open Settings on your Home Screen.\n3. Tap 'Profile Downloaded' near the top, then tap Install.\n\nIf Safari did not prompt, you can paste the copied URL into Safari or export the profile directly."
           }
         },
         "zh_CN" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已在 Safari 中打开下载页面。\n\n1. 在 Safari 中弹出提示时点击“允许”。\n2. 打开“设置” > “已下载描述文件”并点击安装。\n\n如果 Safari 未弹出提示，您也可以直接分享或导出描述文件。"
+            "value" : "已在 Safari 中打开下载页面。下载链接也已复制到剪贴板。\n\n1. 在 Safari 中弹出提示时点击“允许”。\n2. 打开主屏幕上的“设置”。\n3. 点击顶部的“已下载描述文件”，然后点击安装。\n\n如果 Safari 未弹出提示，可将已复制的链接粘贴到 Safari 中，或直接导出描述文件。"
           }
         }
       }

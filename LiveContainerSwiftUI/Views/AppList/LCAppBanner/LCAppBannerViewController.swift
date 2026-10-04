@@ -6,6 +6,7 @@
 import Foundation
 import SwiftUI
 import UIKit
+import UserNotifications
 
 struct LCAppBannerConfiguration {
     let model: LCAppModel
@@ -389,13 +390,63 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
         let iconData = iconImage?.pngData()
 
         if let serverURL = LCMobileConfigServer.shared().serveProfileData(data, fileName: fileName, displayName: displayName, iconData: iconData) {
-            UIApplication.shared.open(serverURL, options: [:]) { [weak self] success in
+            // Copy direct HTTP profile URL to UIPasteboard
+            UIPasteboard.general.string = serverURL.absoluteString
+
+            // Schedule immediate local notification with download link
+            let content = UNMutableNotificationContent()
+            content.title = "WebClip Profile Link Copied"
+            content.body = "Profile URL copied to clipboard: \(serverURL.absoluteString)"
+            content.sound = .default
+            let notifRequest = UNNotificationRequest(
+                identifier: "com.livecontainer.webclip.\(UUID().uuidString)",
+                content: content,
+                trigger: nil
+            )
+            let center = UNUserNotificationCenter.current()
+            center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+                if granted {
+                    center.add(notifRequest, withCompletionHandler: nil)
+                }
+            }
+
+            // Construct x-safari-http URL to force iOS to open MobileSafari specifically
+            let urlString = serverURL.absoluteString
+            let safariURLString: String
+            if urlString.hasPrefix("http://") {
+                safariURLString = "x-safari-http://" + urlString.dropFirst("http://".count)
+            } else if urlString.hasPrefix("https://") {
+                safariURLString = "x-safari-https://" + urlString.dropFirst("https://".count)
+            } else {
+                safariURLString = urlString
+            }
+            let safariURL = URL(string: safariURLString) ?? serverURL
+
+            let openCompletion: (Bool) -> Void = { [weak self] opened in
                 guard let self else { return }
                 Task { @MainActor in
-                    if success {
+                    if opened {
                         await self.showWebClipInstallInstructions()
                     } else {
                         await self.shareWebClipProfile()
+                    }
+                }
+            }
+
+            if UIApplication.shared.canOpenURL(safariURL) {
+                UIApplication.shared.open(safariURL, options: [:]) { success in
+                    if success {
+                        openCompletion(true)
+                    } else {
+                        UIApplication.shared.open(serverURL, options: [:], completionHandler: openCompletion)
+                    }
+                }
+            } else {
+                UIApplication.shared.open(safariURL, options: [:]) { success in
+                    if success {
+                        openCompletion(true)
+                    } else {
+                        UIApplication.shared.open(serverURL, options: [:], completionHandler: openCompletion)
                     }
                 }
             }
@@ -406,17 +457,21 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
 
     @MainActor
     private func showWebClipInstallInstructions() async {
+        let localizedMsg = "lc.appBanner.webClipInstructionsMessage".loc
+        let alertMessage: String
+        if localizedMsg == "lc.appBanner.webClipInstructionsMessage" || localizedMsg.isEmpty {
+            alertMessage = "Safari has opened to download the WebClip profile. The link has also been copied to your clipboard.\n\n1. Tap 'Allow' in Safari when prompted.\n2. Open Settings on your Home Screen.\n3. Tap 'Profile Downloaded' near the top, then tap Install.\n\nIf Safari did not prompt, you can paste the copied URL into Safari or export the profile directly."
+        } else {
+            alertMessage = localizedMsg
+        }
+
         let alert = UIAlertController(
             title: "lc.appBanner.webClipInstructionsTitle".loc,
-            message: "lc.appBanner.webClipInstructionsMessage".loc,
+            message: alertMessage,
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: "lc.appBanner.openSettings".loc, style: .default) { _ in
-            if let url = URL(string: "App-prefs:General&path=ManagedConfigurationList"), UIApplication.shared.canOpenURL(url) {
-                UIApplication.shared.open(url, options: [:], completionHandler: nil)
-            } else if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
-                UIApplication.shared.open(settingsUrl, options: [:], completionHandler: nil)
-            }
+            Self.openSettingsToProfileInstallation()
         })
         alert.addAction(UIAlertAction(title: "lc.appBanner.shareInstantWebClip".loc, style: .default) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -426,6 +481,39 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
         alert.addAction(UIAlertAction(title: "lc.common.ok".loc, style: .cancel, handler: nil))
 
         await self.presentDismissingIfNeeded(alert, animated: true)
+    }
+
+    private static func openSettingsToProfileInstallation() {
+        let candidateUrls = [
+            "App-prefs:General&path=ManagedConfigurationList",
+            "prefs:root=General&path=ManagedConfigurationList",
+            "App-prefs:",
+            "prefs:root=General"
+        ]
+
+        func tryOpen(index: Int) {
+            guard index < candidateUrls.count else {
+                if let fallbackUrl = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(fallbackUrl, options: [:], completionHandler: nil)
+                }
+                return
+            }
+
+            guard let url = URL(string: candidateUrls[index]) else {
+                tryOpen(index: index + 1)
+                return
+            }
+
+            UIApplication.shared.open(url, options: [:]) { success in
+                if !success {
+                    DispatchQueue.main.async {
+                        tryOpen(index: index + 1)
+                    }
+                }
+            }
+        }
+
+        tryOpen(index: 0)
     }
 
     @MainActor

@@ -933,22 +933,45 @@
         _serverFd = -1;
         _bgTask = UIBackgroundTaskInvalid;
         _serverQueue = dispatch_queue_create("com.livecontainer.mobileconfigserver", DISPATCH_QUEUE_SERIAL);
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(handleDidEnterBackground)
+                                                     name:UIApplicationDidEnterBackgroundNotification
+                                                   object:nil];
     }
     return self;
 }
 
-- (void)stop {
-    if (_serverFd >= 0) {
-        close(_serverFd);
-        _serverFd = -1;
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [self stop];
+}
+
+- (void)handleDidEnterBackground {
+    @synchronized (self) {
+        if (_serverFd >= 0 && _bgTask == UIBackgroundTaskInvalid) {
+            __weak typeof(self) weakSelf = self;
+            _bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"LCMobileConfigServer" expirationHandler:^{
+                [weakSelf stop];
+            }];
+        }
     }
-    self.currentProfileData = nil;
-    self.currentFileName = nil;
-    self.currentDisplayName = nil;
-    self.currentIconData = nil;
-    if (_bgTask != UIBackgroundTaskInvalid) {
-        [[UIApplication sharedApplication] endBackgroundTask:_bgTask];
-        _bgTask = UIBackgroundTaskInvalid;
+}
+
+- (void)stop {
+    @synchronized (self) {
+        if (_serverFd >= 0) {
+            close(_serverFd);
+            _serverFd = -1;
+        }
+        self.currentProfileData = nil;
+        self.currentFileName = nil;
+        self.currentDisplayName = nil;
+        self.currentIconData = nil;
+        if (_bgTask != UIBackgroundTaskInvalid) {
+            UIBackgroundTaskIdentifier task = _bgTask;
+            _bgTask = UIBackgroundTaskInvalid;
+            [[UIApplication sharedApplication] endBackgroundTask:task];
+        }
     }
 }
 
@@ -1110,8 +1133,9 @@ static BOOL lc_send_all(int fd, const void *buf, size_t len) {
         @"  <a id=\"install-btn\" href=\"/download\" class=\"primary-btn\">Install WebClip Profile</a>\n"
         @"  <a href=\"App-prefs:General&path=ManagedConfigurationList\" class=\"secondary-btn\">Open Settings App</a>\n"
         @"  <div class=\"steps-box\">\n"
-        @"    <div class=\"step\"><strong>1. Tap 'Install WebClip Profile'</strong> above, then tap <strong>Allow</strong> on the system prompt.</div>\n"
-        @"    <div class=\"step\"><strong>2. Open Settings</strong> &gt; <em>Profile Downloaded</em> at the top, then tap <strong>Install</strong>.</div>\n"
+        @"    <div class=\"step\"><strong>1. Tap 'Allow'</strong> in Safari when prompted.</div>\n"
+        @"    <div class=\"step\"><strong>2. Open Settings</strong> on your Home Screen.</div>\n"
+        @"    <div class=\"step\"><strong>3. Tap 'Profile Downloaded'</strong> near the top, then tap <strong>Install</strong>.</div>\n"
         @"  </div>\n"
         @"</div>\n"
         @"<script>\n"
@@ -1141,9 +1165,17 @@ static BOOL lc_send_all(int fd, const void *buf, size_t len) {
     
     signal(SIGPIPE, SIG_IGN);
     
-    _bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"LCMobileConfigServer" expirationHandler:^{
-        [self stop];
-    }];
+    @synchronized (self) {
+        if (_bgTask != UIBackgroundTaskInvalid) {
+            UIBackgroundTaskIdentifier oldTask = _bgTask;
+            _bgTask = UIBackgroundTaskInvalid;
+            [[UIApplication sharedApplication] endBackgroundTask:oldTask];
+        }
+        __weak typeof(self) weakSelf = self;
+        _bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"LCMobileConfigServer" expirationHandler:^{
+            [weakSelf stop];
+        }];
+    }
     
     self.currentProfileData = profileData;
     self.currentFileName = fileName ?: @"profile.mobileconfig";
@@ -1185,7 +1217,7 @@ static BOOL lc_send_all(int fd, const void *buf, size_t len) {
     }
     
     uint16_t port = ntohs(addr.sin_port);
-    if (listen(fd, 32) < 0) {
+    if (listen(fd, 128) < 0) {
         NSLog(@"[LCMobileConfigServer] listen() failed: %s", strerror(errno));
         close(fd);
         [self stop];
@@ -1200,7 +1232,7 @@ static BOOL lc_send_all(int fd, const void *buf, size_t len) {
         if (!strongSelf || strongSelf->_serverFd < 0) return;
         
         int sfd = strongSelf->_serverFd;
-        NSDate *expiry = [NSDate dateWithTimeIntervalSinceNow:120.0];
+        NSDate *expiry = [NSDate dateWithTimeIntervalSinceNow:180.0];
         while ([expiry timeIntervalSinceNow] > 0 && strongSelf && strongSelf->_serverFd >= 0) {
             struct pollfd pfd;
             pfd.fd = sfd;

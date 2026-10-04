@@ -77,6 +77,10 @@
 		<string>livecontainer3</string>
 		<string>livecontainer4</string>
 		<string>livecontainer5</string>
+		<string>x-safari-http</string>
+		<string>x-safari-https</string>
+		<string>App-prefs</string>
+		<string>prefs</string>
 	</array>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
