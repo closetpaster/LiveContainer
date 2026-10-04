@@ -394,9 +394,14 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             UIPasteboard.general.string = serverURL.absoluteString
 
             // Schedule immediate local notification with download link
+            let notifTitle = "lc.appBanner.webClipNotifTitle".loc
+            let notifBodyFormat = "lc.appBanner.webClipNotifBody".loc
+            let notifTitleStr = (notifTitle == "lc.appBanner.webClipNotifTitle" || notifTitle.isEmpty) ? "WebClip Profile Link Copied" : notifTitle
+            let notifBodyStr = (notifBodyFormat == "lc.appBanner.webClipNotifBody" || notifBodyFormat.isEmpty) ? "Profile URL copied to clipboard: \(serverURL.absoluteString)" : String(format: notifBodyFormat, serverURL.absoluteString)
+
             let content = UNMutableNotificationContent()
-            content.title = "WebClip Profile Link Copied"
-            content.body = "Profile URL copied to clipboard: \(serverURL.absoluteString)"
+            content.title = notifTitleStr
+            content.body = notifBodyStr
             content.sound = .default
             let notifRequest = UNNotificationRequest(
                 identifier: "com.livecontainer.webclip.\(UUID().uuidString)",
@@ -404,9 +409,18 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
                 trigger: nil
             )
             let center = UNUserNotificationCenter.current()
-            center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-                if granted {
+            center.getNotificationSettings { settings in
+                switch settings.authorizationStatus {
+                case .authorized, .provisional:
                     center.add(notifRequest, withCompletionHandler: nil)
+                case .notDetermined:
+                    center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+                        if granted {
+                            center.add(notifRequest, withCompletionHandler: nil)
+                        }
+                    }
+                default:
+                    break
                 }
             }
 
@@ -433,21 +447,11 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
                 }
             }
 
-            if UIApplication.shared.canOpenURL(safariURL) {
-                UIApplication.shared.open(safariURL, options: [:]) { success in
-                    if success {
-                        openCompletion(true)
-                    } else {
-                        UIApplication.shared.open(serverURL, options: [:], completionHandler: openCompletion)
-                    }
-                }
-            } else {
-                UIApplication.shared.open(safariURL, options: [:]) { success in
-                    if success {
-                        openCompletion(true)
-                    } else {
-                        UIApplication.shared.open(serverURL, options: [:], completionHandler: openCompletion)
-                    }
+            UIApplication.shared.open(safariURL, options: [:]) { success in
+                if success {
+                    openCompletion(true)
+                } else {
+                    UIApplication.shared.open(serverURL, options: [:], completionHandler: openCompletion)
                 }
             }
         } else {
@@ -486,9 +490,13 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
     private static func openSettingsToProfileInstallation() {
         let candidateUrls = [
             "App-prefs:General&path=ManagedConfigurationList",
+            "App-prefs:root=General&path=ManagedConfigurationList",
             "prefs:root=General&path=ManagedConfigurationList",
+            "prefs:General&path=ManagedConfigurationList",
+            "App-prefs:root=General",
+            "prefs:root=General",
             "App-prefs:",
-            "prefs:root=General"
+            "prefs:"
         ]
 
         func tryOpen(index: Int) {

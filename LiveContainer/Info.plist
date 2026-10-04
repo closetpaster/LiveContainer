@@ -80,6 +80,7 @@
 		<string>x-safari-http</string>
 		<string>x-safari-https</string>
 		<string>App-prefs</string>
+		<string>app-prefs</string>
 		<string>prefs</string>
 	</array>
 	<key>LSSupportsOpeningDocumentsInPlace</key>

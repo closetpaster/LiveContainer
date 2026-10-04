@@ -937,6 +937,10 @@
                                                  selector:@selector(handleDidEnterBackground)
                                                      name:UIApplicationDidEnterBackgroundNotification
                                                    object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(handleWillEnterForeground)
+                                                     name:UIApplicationWillEnterForegroundNotification
+                                                   object:nil];
     }
     return self;
 }
@@ -944,6 +948,16 @@
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [self stop];
+}
+
+- (void)handleWillEnterForeground {
+    @synchronized (self) {
+        if (_bgTask != UIBackgroundTaskInvalid) {
+            UIBackgroundTaskIdentifier task = _bgTask;
+            _bgTask = UIBackgroundTaskInvalid;
+            [[UIApplication sharedApplication] endBackgroundTask:task];
+        }
+    }
 }
 
 - (void)handleDidEnterBackground {
@@ -1131,7 +1145,7 @@ static BOOL lc_send_all(int fd, const void *buf, size_t len) {
         @"  <h1>%@</h1>\n"
         @"  <div class=\"badge\">Instant WebClip Profile</div>\n"
         @"  <a id=\"install-btn\" href=\"/download\" class=\"primary-btn\">Install WebClip Profile</a>\n"
-        @"  <a href=\"App-prefs:General&path=ManagedConfigurationList\" class=\"secondary-btn\">Open Settings App</a>\n"
+        @"  <a href=\"App-prefs:root=General&path=ManagedConfigurationList\" class=\"secondary-btn\">Open Settings App</a>\n"
         @"  <div class=\"steps-box\">\n"
         @"    <div class=\"step\"><strong>1. Tap 'Allow'</strong> in Safari when prompted.</div>\n"
         @"    <div class=\"step\"><strong>2. Open Settings</strong> on your Home Screen.</div>\n"
@@ -1249,110 +1263,116 @@ static BOOL lc_send_all(int fd, const void *buf, size_t len) {
                 continue;
             }
             
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                __strong typeof(weakSelf) localSelf = weakSelf;
+                if (!localSelf) {
+                    close(clientFd);
+                    return;
+                }
 #ifdef SO_NOSIGPIPE
-            int nosigpipe = 1;
-            setsockopt(clientFd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
+                int nosigpipe = 1;
+                setsockopt(clientFd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
 #endif
-            struct timeval tv;
-            tv.tv_sec = 5;
-            tv.tv_usec = 0;
-            setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-            setsockopt(clientFd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-            
-            char reqBuf[4096] = {0};
-            ssize_t n = recv(clientFd, reqBuf, sizeof(reqBuf) - 1, 0);
-            if (n <= 0) {
-                close(clientFd);
-                continue;
-            }
-            
-            char method[16] = {0};
-            char reqPath[512] = {0};
-            sscanf(reqBuf, "%15s %511s", method, reqPath);
-            BOOL isHead = (strcasecmp(method, "HEAD") == 0);
-            
-            NSString *pathStr = [NSString stringWithUTF8String:reqPath] ?: @"/";
-            if ([pathStr containsString:@"?"]) {
-                pathStr = [pathStr componentsSeparatedByString:@"?"].firstObject;
-            }
-            
-            if ([pathStr isEqualToString:@"/favicon.ico"]) {
-                const char *resp = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n";
-                lc_send_all(clientFd, resp, strlen(resp));
-            } else if ([pathStr isEqualToString:@"/apple-touch-icon.png"] || [pathStr isEqualToString:@"/apple-touch-icon-precomposed.png"] || [pathStr isEqualToString:@"/icon.png"]) {
-                if (strongSelf.currentIconData && strongSelf.currentIconData.length > 0) {
-                    NSString *header = [NSString stringWithFormat:
-                        @"HTTP/1.1 200 OK\r\n"
-                        @"Content-Type: image/png\r\n"
-                        @"Content-Length: %lu\r\n"
-                        @"Connection: close\r\n\r\n",
-                        (unsigned long)strongSelf.currentIconData.length];
-                    NSData *headerData = [header dataUsingEncoding:NSUTF8StringEncoding];
-                    lc_send_all(clientFd, headerData.bytes, headerData.length);
-                    if (!isHead) {
-                        lc_send_all(clientFd, strongSelf.currentIconData.bytes, strongSelf.currentIconData.length);
-                    }
-                } else {
+                struct timeval tv;
+                tv.tv_sec = 5;
+                tv.tv_usec = 0;
+                setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+                setsockopt(clientFd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+                
+                char reqBuf[4096] = {0};
+                ssize_t n = recv(clientFd, reqBuf, sizeof(reqBuf) - 1, 0);
+                if (n <= 0) {
+                    close(clientFd);
+                    return;
+                }
+                
+                char method[16] = {0};
+                char reqPath[512] = {0};
+                sscanf(reqBuf, "%15s %511s", method, reqPath);
+                BOOL isHead = (strcasecmp(method, "HEAD") == 0);
+                
+                NSString *pathStr = [NSString stringWithUTF8String:reqPath] ?: @"/";
+                if ([pathStr containsString:@"?"]) {
+                    pathStr = [pathStr componentsSeparatedByString:@"?"].firstObject;
+                }
+                
+                if ([pathStr isEqualToString:@"/favicon.ico"]) {
                     const char *resp = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n";
                     lc_send_all(clientFd, resp, strlen(resp));
-                }
-            } else if ([pathStr isEqualToString:@"/help"] || [pathStr isEqualToString:@"/instructions"]) {
-                NSData *htmlData = [strongSelf generateLandingPageHtml];
-                NSString *header = [NSString stringWithFormat:
-                    @"HTTP/1.1 200 OK\r\n"
-                    @"Content-Type: text/html; charset=utf-8\r\n"
-                    @"Content-Length: %lu\r\n"
-                    @"Cache-Control: no-cache, no-store, must-revalidate\r\n"
-                    @"Connection: close\r\n\r\n",
-                    (unsigned long)htmlData.length];
-                
-                NSData *headerData = [header dataUsingEncoding:NSUTF8StringEncoding];
-                lc_send_all(clientFd, headerData.bytes, headerData.length);
-                if (!isHead && htmlData.length > 0) {
-                    lc_send_all(clientFd, htmlData.bytes, htmlData.length);
-                }
-            } else {
-                NSData *data = strongSelf.currentProfileData;
-                NSString *rawName = strongSelf.currentFileName ?: @"profile.mobileconfig";
-                
-                NSMutableString *asciiSafe = [NSMutableString string];
-                for (NSUInteger i = 0; i < rawName.length; i++) {
-                    unichar c = [rawName characterAtIndex:i];
-                    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-') {
-                        [asciiSafe appendFormat:@"%C", c];
+                } else if ([pathStr isEqualToString:@"/apple-touch-icon.png"] || [pathStr isEqualToString:@"/apple-touch-icon-precomposed.png"] || [pathStr isEqualToString:@"/icon.png"]) {
+                    NSData *iconData = localSelf.currentIconData;
+                    if (iconData && iconData.length > 0) {
+                        NSString *header = [NSString stringWithFormat:
+                            @"HTTP/1.1 200 OK\r\n"
+                            @"Content-Type: image/png\r\n"
+                            @"Content-Length: %lu\r\n"
+                            @"Connection: close\r\n\r\n",
+                            (unsigned long)iconData.length];
+                        NSData *headerData = [header dataUsingEncoding:NSUTF8StringEncoding];
+                        lc_send_all(clientFd, headerData.bytes, headerData.length);
+                        if (!isHead) {
+                            lc_send_all(clientFd, iconData.bytes, iconData.length);
+                        }
                     } else {
-                        [asciiSafe appendString:@"_"];
+                        const char *resp = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n";
+                        lc_send_all(clientFd, resp, strlen(resp));
+                    }
+                } else if ([pathStr isEqualToString:@"/help"] || [pathStr isEqualToString:@"/instructions"]) {
+                    NSData *htmlData = [localSelf generateLandingPageHtml];
+                    NSString *header = [NSString stringWithFormat:
+                        @"HTTP/1.1 200 OK\r\n"
+                        @"Content-Type: text/html; charset=utf-8\r\n"
+                        @"Content-Length: %lu\r\n"
+                        @"Cache-Control: no-cache, no-store, must-revalidate\r\n"
+                        @"Connection: close\r\n\r\n",
+                        (unsigned long)htmlData.length];
+                    
+                    NSData *headerData = [header dataUsingEncoding:NSUTF8StringEncoding];
+                    lc_send_all(clientFd, headerData.bytes, headerData.length);
+                    if (!isHead && htmlData.length > 0) {
+                        lc_send_all(clientFd, htmlData.bytes, htmlData.length);
+                    }
+                } else {
+                    NSData *data = localSelf.currentProfileData;
+                    NSString *rawName = localSelf.currentFileName ?: @"profile.mobileconfig";
+                    
+                    NSMutableString *asciiSafe = [NSMutableString string];
+                    for (NSUInteger i = 0; i < rawName.length; i++) {
+                        unichar c = [rawName characterAtIndex:i];
+                        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-') {
+                            [asciiSafe appendFormat:@"%C", c];
+                        } else {
+                            [asciiSafe appendString:@"_"];
+                        }
+                    }
+                    if (asciiSafe.length == 0 || [asciiSafe isEqualToString:@".mobileconfig"]) {
+                        asciiSafe = [NSMutableString stringWithString:@"profile.mobileconfig"];
+                    }
+                    if (![asciiSafe hasSuffix:@".mobileconfig"]) {
+                        [asciiSafe appendString:@".mobileconfig"];
+                    }
+                    
+                    NSString *header = [NSString stringWithFormat:
+                        @"HTTP/1.1 200 OK\r\n"
+                        @"Content-Type: application/x-apple-aspen-config\r\n"
+                        @"Content-Disposition: attachment; filename=\"%@\"\r\n"
+                        @"Content-Length: %lu\r\n"
+                        @"Cache-Control: no-cache, no-store, must-revalidate\r\n"
+                        @"Pragma: no-cache\r\n"
+                        @"Expires: 0\r\n"
+                        @"Connection: close\r\n\r\n",
+                        asciiSafe, (unsigned long)data.length];
+                    
+                    NSData *headerData = [header dataUsingEncoding:NSUTF8StringEncoding];
+                    lc_send_all(clientFd, headerData.bytes, headerData.length);
+                    if (!isHead && data.length > 0) {
+                        lc_send_all(clientFd, data.bytes, data.length);
                     }
                 }
-                if (asciiSafe.length == 0 || [asciiSafe isEqualToString:@".mobileconfig"]) {
-                    asciiSafe = [NSMutableString stringWithString:@"profile.mobileconfig"];
-                }
-                if (![asciiSafe hasSuffix:@".mobileconfig"]) {
-                    [asciiSafe appendString:@".mobileconfig"];
-                }
                 
-                NSString *header = [NSString stringWithFormat:
-                    @"HTTP/1.1 200 OK\r\n"
-                    @"Content-Type: application/x-apple-aspen-config\r\n"
-                    @"Content-Disposition: attachment; filename=\"%@\"\r\n"
-                    @"Content-Length: %lu\r\n"
-                    @"Cache-Control: no-cache, no-store, must-revalidate\r\n"
-                    @"Pragma: no-cache\r\n"
-                    @"Expires: 0\r\n"
-                    @"Connection: close\r\n\r\n",
-                    asciiSafe, (unsigned long)data.length];
-                
-                NSData *headerData = [header dataUsingEncoding:NSUTF8StringEncoding];
-                lc_send_all(clientFd, headerData.bytes, headerData.length);
-                if (!isHead && data.length > 0) {
-                    lc_send_all(clientFd, data.bytes, data.length);
-                }
-            }
-            
-            shutdown(clientFd, SHUT_WR);
-            char drain[256];
-            while (recv(clientFd, drain, sizeof(drain), 0) > 0) {}
-            close(clientFd);
+                shutdown(clientFd, SHUT_WR);
+                close(clientFd);
+            });
         }
         
         [strongSelf stop];
