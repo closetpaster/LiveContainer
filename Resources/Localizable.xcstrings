@@ -1,6 +1,23 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "lc.guestTweak.returnToLiveContainerTip" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Do you want to return to the LiveContainer app list?"
+          }
+        },
+        "zh_CN" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您想要返回 LiveContainer 应用列表吗？"
+          }
+        }
+      }
+    },
     "lc.appBanner.assignToLiveContainer" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -355,6 +355,7 @@ class LCAppModel: ObservableObject, Hashable {
             UserDefaults.standard.setValue(urlStr, forKey: "launchAppUrlScheme")
         }
         UserDefaults.standard.set(uiSelectedContainer?.folderName, forKey: "selectedContainer")
+        UserDefaults.standard.synchronize()
         
         var jitNeeded = appInfo.isJITNeeded || appInfo.is32bit
         if let forceJIT {

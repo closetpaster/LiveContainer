@@ -729,7 +729,21 @@ int LiveContainerMain(int argc, char *argv[]) {
         [lcSharedDefaults removeObjectForKey:@"LCAssignedContainer_livecontainer1"];
         [lcSharedDefaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer"];
         [lcSharedDefaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer1"];
+        [lcSharedDefaults removeObjectForKey:@"LCAutoLaunchBundleId"];
+        [lcSharedDefaults removeObjectForKey:@"LCAutoLaunchContainer"];
         [lcSharedDefaults synchronize];
+
+        [lcUserDefaults removeObjectForKey:@"LCAssignedApp_livecontainer"];
+        [lcUserDefaults removeObjectForKey:@"LCAssignedApp_livecontainer1"];
+        [lcUserDefaults removeObjectForKey:@"LCAutoLaunchBundleId_livecontainer"];
+        [lcUserDefaults removeObjectForKey:@"LCAutoLaunchBundleId_livecontainer1"];
+        [lcUserDefaults removeObjectForKey:@"LCAssignedContainer_livecontainer"];
+        [lcUserDefaults removeObjectForKey:@"LCAssignedContainer_livecontainer1"];
+        [lcUserDefaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer"];
+        [lcUserDefaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer1"];
+        [lcUserDefaults removeObjectForKey:@"LCAutoLaunchBundleId"];
+        [lcUserDefaults removeObjectForKey:@"LCAutoLaunchContainer"];
+        [lcUserDefaults synchronize];
     }
 
     NSString *selectedApp = [lcUserDefaults stringForKey:@"selected"];
@@ -743,12 +757,19 @@ int LiveContainerMain(int argc, char *argv[]) {
             [lcUserDefaults removeObjectForKey:@"selected"];
             [lcUserDefaults removeObjectForKey:@"selectedContainer"];
             [lcUserDefaults removeObjectForKey:@"selectedTime"];
+            [lcUserDefaults removeObjectForKey:@"launchAppUrlScheme"];
+            [lcUserDefaults synchronize];
+            [lcSharedDefaults removeObjectForKey:@"selected"];
+            [lcSharedDefaults removeObjectForKey:@"selectedContainer"];
+            [lcSharedDefaults removeObjectForKey:@"selectedTime"];
+            [lcSharedDefaults removeObjectForKey:@"launchAppUrlScheme"];
+            [lcSharedDefaults synchronize];
         } else {
             NSNumber *selectedTimeNum = [lcUserDefaults objectForKey:@"selectedTime"];
             NSTimeInterval selectedTime = [selectedTimeNum doubleValue];
             NSTimeInterval now = NSDate.date.timeIntervalSince1970;
-            // If selectedTime is missing or older than 10 seconds, it's a lingering key from a previous session/crash!
-            if(selectedTimeNum == nil || selectedTime <= 0 || (now - selectedTime) > 10.0 || (selectedTime - now) > 2.0) {
+            // If selectedTime is missing or older than 3.0 seconds, it's a lingering key from a previous session/crash/kill!
+            if(selectedTimeNum == nil || selectedTime <= 0 || (now - selectedTime) > 3.0 || (selectedTime - now) > 2.0) {
                 NSLog(@"[LCBootstrap] Wiping lingering selectedApp: %@", selectedApp);
                 selectedApp = nil;
                 selectedContainer = nil;
@@ -756,8 +777,15 @@ int LiveContainerMain(int argc, char *argv[]) {
                 [lcUserDefaults removeObjectForKey:@"selectedContainer"];
                 [lcUserDefaults removeObjectForKey:@"selectedTime"];
                 [lcUserDefaults removeObjectForKey:@"launchAppUrlScheme"];
+                [lcUserDefaults synchronize];
+                [lcSharedDefaults removeObjectForKey:@"selected"];
+                [lcSharedDefaults removeObjectForKey:@"selectedContainer"];
+                [lcSharedDefaults removeObjectForKey:@"selectedTime"];
+                [lcSharedDefaults removeObjectForKey:@"launchAppUrlScheme"];
+                [lcSharedDefaults synchronize];
             } else {
                 [lcUserDefaults removeObjectForKey:@"selectedTime"];
+                [lcUserDefaults synchronize];
             }
         }
     }
@@ -896,9 +924,17 @@ int LiveContainerMain(int argc, char *argv[]) {
     
     if([selectedApp isEqualToString:@"ui"]) {
         selectedApp = nil;
+        selectedContainer = nil;
         [lcUserDefaults removeObjectForKey:@"selected"];
         [lcUserDefaults removeObjectForKey:@"selectedContainer"];
         [lcUserDefaults removeObjectForKey:@"selectedTime"];
+        [lcUserDefaults removeObjectForKey:@"launchAppUrlScheme"];
+        [lcUserDefaults synchronize];
+        [lcSharedDefaults removeObjectForKey:@"selected"];
+        [lcSharedDefaults removeObjectForKey:@"selectedContainer"];
+        [lcSharedDefaults removeObjectForKey:@"selectedTime"];
+        [lcSharedDefaults removeObjectForKey:@"launchAppUrlScheme"];
+        [lcSharedDefaults synchronize];
     }
     
     if(isLiveProcess) {
@@ -969,10 +1005,16 @@ int LiveContainerMain(int argc, char *argv[]) {
         [lcUserDefaults removeObjectForKey:@"selected"];
         [lcUserDefaults removeObjectForKey:@"selectedContainer"];
         [lcUserDefaults removeObjectForKey:@"selectedTime"];
+        [lcSharedDefaults removeObjectForKey:@"selected"];
+        [lcSharedDefaults removeObjectForKey:@"selectedContainer"];
+        [lcSharedDefaults removeObjectForKey:@"selectedTime"];
         if(launchUrl) {
             lcLaunchURL = launchUrl;
             [lcUserDefaults removeObjectForKey:@"launchAppUrlScheme"];
+            [lcSharedDefaults removeObjectForKey:@"launchAppUrlScheme"];
         }
+        [lcUserDefaults synchronize];
+        [lcSharedDefaults synchronize];
         NSString *appError = invokeAppMain(selectedApp, selectedContainer, argc, argv);
         if (appError) {
             if(isLiveProcess) {

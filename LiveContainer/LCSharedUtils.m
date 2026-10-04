@@ -136,13 +136,14 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
     
     if (!self.certificatePassword) {
         NSString *urlScheme = nil;
-        NSString *tsPath = [NSString stringWithFormat:@"%@/../_TrollStore", NSBundle.mainBundle.bundlePath];
+        NSBundle *realMainBundle = [NSUserDefaults lcMainBundle] ?: [NSBundle mainBundle];
+        NSString *tsPath = [NSString stringWithFormat:@"%@/../_TrollStore", realMainBundle.bundlePath];
         if (!access(tsPath.UTF8String, F_OK)) {
             urlScheme = @"apple-magnifier://enable-jit?bundle-id=%@";
         }
         
         if(urlScheme) {
-            NSURL *launchURL = [NSURL URLWithString:[NSString stringWithFormat:urlScheme, NSBundle.mainBundle.bundleIdentifier]];
+            NSURL *launchURL = [NSURL URLWithString:[NSString stringWithFormat:urlScheme, realMainBundle.bundleIdentifier]];
             UIApplication *application = [NSClassFromString(@"UIApplication") sharedApplication];
             [application openURL:launchURL options:@{} completionHandler:completionHandler];
             return YES;
@@ -199,6 +200,7 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
         [lcUserDefaults setObject:launchBundleId forKey:@"selected"];
         [lcUserDefaults setObject:@(NSDate.date.timeIntervalSince1970) forKey:@"selectedTime"];
         [lcUserDefaults setObject:containerFolderName forKey:@"selectedContainer"];
+        [lcUserDefaults synchronize];
         bool isSharedApp = false;
         NSBundle *appBundle = [self findBundleWithBundleId:launchBundleId isSharedAppOut:&isSharedApp];
         NSDictionary *appInfo = [NSDictionary dictionaryWithContentsOfFile:
@@ -580,7 +582,10 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
             [defaults removeObjectForKey:@"LCAssignedContainer_livecontainer1"];
             [defaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer"];
             [defaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer1"];
+            [defaults removeObjectForKey:@"LCAutoLaunchBundleId"];
+            [defaults removeObjectForKey:@"LCAutoLaunchContainer"];
             [defaults setObject:@"livecontainer" forKey:[NSString stringWithFormat:@"LCAssignedLC_%@", bundleKey]];
+            [defaults synchronize];
             return;
         }
 
@@ -601,6 +606,7 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
             [defaults removeObjectForKey:[NSString stringWithFormat:@"LCAutoLaunchContainer_%@", normalizedTarget]];
         }
         [defaults setObject:normalizedTarget forKey:[NSString stringWithFormat:@"LCAssignedLC_%@", bundleKey]];
+        [defaults synchronize];
     }
 }
 
@@ -614,6 +620,17 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
     [defaults removeObjectForKey:@"launchAppUrlScheme"];
     [defaults removeObjectForKey:@"LCOpenSideStore"];
     
+    [defaults removeObjectForKey:@"LCAssignedApp_livecontainer"];
+    [defaults removeObjectForKey:@"LCAssignedApp_livecontainer1"];
+    [defaults removeObjectForKey:@"LCAutoLaunchBundleId_livecontainer"];
+    [defaults removeObjectForKey:@"LCAutoLaunchBundleId_livecontainer1"];
+    [defaults removeObjectForKey:@"LCAssignedContainer_livecontainer"];
+    [defaults removeObjectForKey:@"LCAssignedContainer_livecontainer1"];
+    [defaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer"];
+    [defaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer1"];
+    [defaults removeObjectForKey:@"LCAutoLaunchBundleId"];
+    [defaults removeObjectForKey:@"LCAutoLaunchContainer"];
+
     // Clear all assigned & auto-launch keys for default main container
     [sharedDefaults removeObjectForKey:@"LCAssignedApp_livecontainer"];
     [sharedDefaults removeObjectForKey:@"LCAssignedApp_livecontainer1"];
@@ -623,8 +640,22 @@ NSString* FBSOpenApplicationOptionKeyPayloadURL = @"__PayloadURL";
     [sharedDefaults removeObjectForKey:@"LCAssignedContainer_livecontainer1"];
     [sharedDefaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer"];
     [sharedDefaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer1"];
+    [sharedDefaults removeObjectForKey:@"LCAutoLaunchBundleId"];
+    [sharedDefaults removeObjectForKey:@"LCAutoLaunchContainer"];
     
     // Clear any pending launch tasks
+    [defaults removeObjectForKey:@"LCPendingLaunchBundleID"];
+    [defaults removeObjectForKey:@"LCPendingLaunchScheme"];
+    [defaults removeObjectForKey:@"LCPendingLaunchContainerName"];
+    [defaults removeObjectForKey:@"LCPendingLaunchURL"];
+    [defaults removeObjectForKey:@"LCPendingLaunchDate"];
+    
+    [defaults removeObjectForKey:@"LCLaunchExtensionBundleID"];
+    [defaults removeObjectForKey:@"LCLaunchExtensionScheme"];
+    [defaults removeObjectForKey:@"LCLaunchExtensionContainerName"];
+    [defaults removeObjectForKey:@"LCLaunchExtensionLaunchURL"];
+    [defaults removeObjectForKey:@"LCLaunchExtensionLaunchDate"];
+
     [sharedDefaults removeObjectForKey:@"LCPendingLaunchBundleID"];
     [sharedDefaults removeObjectForKey:@"LCPendingLaunchScheme"];
     [sharedDefaults removeObjectForKey:@"LCPendingLaunchContainerName"];

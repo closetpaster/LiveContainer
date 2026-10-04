@@ -183,6 +183,18 @@ void LCShowAppNotFoundAlert(NSString* bundleId) {
     return YES;
 }
 
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer canPreventGestureRecognizer:(UIGestureRecognizer *)preventedGestureRecognizer {
+    return NO;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer canBePreventedByGestureRecognizer:(UIGestureRecognizer *)preventingGestureRecognizer {
+    return NO;
+}
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
+    return YES;
+}
+
 - (void)handleThreeFingerTap:(UITapGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateRecognized || gesture.state == UIGestureRecognizerStateEnded) {
         [self promptReturnToLiveContainer];
@@ -190,7 +202,55 @@ void LCShowAppNotFoundAlert(NSString* bundleId) {
 }
 
 - (void)executeReturnToLiveContainer {
-    [NSClassFromString(@"LCSharedUtils") returnToLiveContainerUI];
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSUserDefaults *sharedDefaults = [NSUserDefaults lcUserDefaults] ?: [NSUserDefaults standardUserDefaults];
+    [defaults removeObjectForKey:@"selected"];
+    [defaults removeObjectForKey:@"selectedContainer"];
+    [defaults removeObjectForKey:@"selectedTime"];
+    [defaults removeObjectForKey:@"launchAppUrlScheme"];
+    [defaults removeObjectForKey:@"LCOpenSideStore"];
+    [defaults removeObjectForKey:@"LCAssignedApp_livecontainer"];
+    [defaults removeObjectForKey:@"LCAssignedApp_livecontainer1"];
+    [defaults removeObjectForKey:@"LCAutoLaunchBundleId_livecontainer"];
+    [defaults removeObjectForKey:@"LCAutoLaunchBundleId_livecontainer1"];
+    [defaults removeObjectForKey:@"LCAssignedContainer_livecontainer"];
+    [defaults removeObjectForKey:@"LCAssignedContainer_livecontainer1"];
+    [defaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer"];
+    [defaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer1"];
+    [defaults removeObjectForKey:@"LCAutoLaunchBundleId"];
+    [defaults removeObjectForKey:@"LCAutoLaunchContainer"];
+    [defaults synchronize];
+
+    [sharedDefaults removeObjectForKey:@"selected"];
+    [sharedDefaults removeObjectForKey:@"selectedContainer"];
+    [sharedDefaults removeObjectForKey:@"selectedTime"];
+    [sharedDefaults removeObjectForKey:@"launchAppUrlScheme"];
+    [sharedDefaults removeObjectForKey:@"LCOpenSideStore"];
+    [sharedDefaults removeObjectForKey:@"LCAssignedApp_livecontainer"];
+    [sharedDefaults removeObjectForKey:@"LCAssignedApp_livecontainer1"];
+    [sharedDefaults removeObjectForKey:@"LCAutoLaunchBundleId_livecontainer"];
+    [sharedDefaults removeObjectForKey:@"LCAutoLaunchBundleId_livecontainer1"];
+    [sharedDefaults removeObjectForKey:@"LCAssignedContainer_livecontainer"];
+    [sharedDefaults removeObjectForKey:@"LCAssignedContainer_livecontainer1"];
+    [sharedDefaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer"];
+    [sharedDefaults removeObjectForKey:@"LCAutoLaunchContainer_livecontainer1"];
+    [sharedDefaults removeObjectForKey:@"LCAutoLaunchBundleId"];
+    [sharedDefaults removeObjectForKey:@"LCAutoLaunchContainer"];
+    [sharedDefaults synchronize];
+
+    Class sharedUtils = NSClassFromString(@"LCSharedUtils");
+    if (sharedUtils && [sharedUtils respondsToSelector:@selector(returnToLiveContainerUI)]) {
+        [sharedUtils returnToLiveContainerUI];
+    } else {
+        NSString *lcScheme = NSUserDefaults.lcAppUrlScheme ?: @"livecontainer";
+        NSURL *uiURL = [NSURL URLWithString:[NSString stringWithFormat:@"%@://livecontainer-launch?bundle-name=ui", lcScheme]];
+        [[UIApplication sharedApplication] openURL:uiURL options:@{} completionHandler:^(BOOL success) {
+            raise(SIGKILL);
+        }];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            raise(SIGKILL);
+        });
+    }
 }
 
 - (void)promptReturnToLiveContainer {
@@ -219,6 +279,7 @@ void LCShowAppNotFoundAlert(NSString* bundleId) {
         __weak typeof(self) weakSelf = self;
         UIAlertAction *returnAction = [UIAlertAction actionWithTitle:@"Return to LiveContainer" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
             weakSelf.isAlertPresented = NO;
+            window.hidden = YES;
             window.windowScene = nil;
             [weakSelf executeReturnToLiveContainer];
         }];
@@ -226,13 +287,25 @@ void LCShowAppNotFoundAlert(NSString* bundleId) {
         
         UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"lc.common.cancel".loc style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
             weakSelf.isAlertPresented = NO;
+            window.hidden = YES;
             window.windowScene = nil;
         }];
         [alert addAction:cancelAction];
         
         window.rootViewController = [UIViewController new];
-        window.windowLevel = UIApplication.sharedApplication.windows.lastObject.windowLevel + 1;
-        window.windowScene = (id)UIApplication.sharedApplication.connectedScenes.anyObject;
+        window.windowLevel = UIWindowLevelAlert + 1;
+        UIWindowScene *scene = nil;
+        for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
+            if ([s isKindOfClass:[UIWindowScene class]] && s.activationState == UISceneActivationStateForegroundActive) {
+                scene = (UIWindowScene *)s;
+                break;
+            }
+        }
+        if (!scene) {
+            scene = (id)UIApplication.sharedApplication.connectedScenes.anyObject;
+        }
+        window.windowScene = scene;
+        window.hidden = NO;
         [window makeKeyAndVisible];
         [window.rootViewController presentViewController:alert animated:YES completion:nil];
         objc_setAssociatedObject(alert, @"window", window, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -242,8 +315,12 @@ void LCShowAppNotFoundAlert(NSString* bundleId) {
 
 static void setupWindowGestures(UIWindow *window) {
     if (!window || ![window isKindOfClass:[UIWindow class]]) return;
+    if (objc_getAssociatedObject(window, "LCReturnGestureAttached")) {
+        return;
+    }
     for (UIGestureRecognizer *gr in window.gestureRecognizers) {
         if ([gr.name isEqualToString:@"LCReturnGesture"]) {
+            objc_setAssociatedObject(window, "LCReturnGestureAttached", @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             return;
         }
     }
@@ -256,6 +333,7 @@ static void setupWindowGestures(UIWindow *window) {
     threeFingerTap.delegate = [LCReturnToLCHandler sharedHandler];
     threeFingerTap.name = @"LCReturnGesture";
     [window addGestureRecognizer:threeFingerTap];
+    objc_setAssociatedObject(window, "LCReturnGestureAttached", @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 
