@@ -138,7 +138,12 @@ final class LCAppBannerRootView: UIView {
 
         iconImageView.image = icon
         if let slot = model.uiDedicatedSlot ?? LCAppModel.fetchDedicatedSlot(forApp: appInfo.relativeBundlePath) {
-            nameLabel.text = "\(model.displayName) (\(slot))"
+            let isDisabled = model.uiDedicatedDisabled || LCAppModel.isDedicatedDisabled(forApp: appInfo.relativeBundlePath, slot: slot)
+            if isDisabled {
+                nameLabel.text = "\(model.displayName) (\(slot) - Disabled)"
+            } else {
+                nameLabel.text = "\(model.displayName) (\(slot))"
+            }
         } else {
             nameLabel.text = model.displayName
         }

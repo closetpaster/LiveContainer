@@ -180,6 +180,10 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             })
         }
 
+        let currentSlot = model.uiDedicatedSlot ?? LCAppModel.fetchDedicatedSlot(forApp: appInfo.relativeBundlePath)
+        let isDedicated = (currentSlot != nil)
+        let isDedicatedDisabled = model.uiDedicatedDisabled || (isDedicated && LCAppModel.isDedicatedDisabled(forApp: appInfo.relativeBundlePath, slot: currentSlot))
+
         sectionChildren.append(UIAction(
             title: "lc.appBanner.createDedicatedLC".loc,
             image: UIImage(systemName: "shippingbox.fill")
@@ -188,6 +192,27 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
                 await self?.packageDedicatedLiveContainer()
             }
         })
+
+        if isDedicated {
+            let toggleTitle = isDedicatedDisabled ? "lc.appBanner.enableDedicatedLC".loc : "lc.appBanner.disableDedicatedLC".loc
+            let toggleImage = isDedicatedDisabled ? (UIImage(systemName: "play.circle.fill") ?? UIImage(systemName: "play.fill")) : (UIImage(systemName: "pause.circle.fill") ?? UIImage(systemName: "pause.fill"))
+            sectionChildren.append(UIAction(
+                title: toggleTitle,
+                image: toggleImage
+            ) { [weak self] _ in
+                self?.toggleDedicatedAppDisabled(currentlyDisabled: isDedicatedDisabled)
+            })
+
+            sectionChildren.append(UIAction(
+                title: "lc.appBanner.removeDedicatedLC".loc,
+                image: UIImage(systemName: "xmark.circle.fill") ?? UIImage(systemName: "trash.fill"),
+                attributes: .destructive
+            ) { [weak self] _ in
+                Task { [weak self] in
+                    await self?.confirmRemoveDedicatedPackage()
+                }
+            })
+        }
 
         let addToHomeScreenMenu = UIMenu(
             title: "lc.appBanner.addToHomeScreen".loc,
@@ -255,6 +280,28 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
         UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
             self?.makeContextMenu()
         }
+    }
+
+    private func toggleDedicatedAppDisabled(currentlyDisabled: Bool) {
+        configuration.model.setDedicatedDisabled(!currentlyDisabled)
+        refreshView()
+    }
+
+    private func confirmRemoveDedicatedPackage() async {
+        let appInfo = configuration.model.appInfo
+        let displayName = appInfo.displayName() ?? configuration.model.displayName
+        let shouldRemove = await presentConfirmation(
+            title: "lc.appBanner.removeDedicatedLCTitle".loc,
+            message: "lc.appBanner.removeDedicatedLCMsg %@".localizeWithFormat(displayName),
+            confirmTitle: "lc.appBanner.removeDedicatedLC".loc,
+            cancelTitle: "lc.common.cancel".loc
+        )
+        guard shouldRemove == true else {
+            return
+        }
+
+        configuration.model.removeDedicatedPackage()
+        refreshView()
     }
 
     private func openSettings() {

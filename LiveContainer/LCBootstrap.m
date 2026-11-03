@@ -858,8 +858,18 @@ int LiveContainerMain(int argc, char *argv[]) {
         }
     }
 
+    // Check if dedicated auto-launch has been disabled or removed for this container instance
+    BOOL isDedicatedDisabledOrRemoved = NO;
+    if(lcAppUrlScheme && lcAppUrlScheme.length > 0) {
+        NSString *normScheme = [lcAppUrlScheme lowercaseString];
+        isDedicatedDisabledOrRemoved = [lcSharedDefaults boolForKey:[NSString stringWithFormat:@"LCDedicatedDisabled_%@", normScheme]]
+            || [lcUserDefaults boolForKey:[NSString stringWithFormat:@"LCDedicatedDisabled_%@", normScheme]]
+            || [lcSharedDefaults boolForKey:[NSString stringWithFormat:@"LCDedicatedRemoved_%@", normScheme]]
+            || [lcUserDefaults boolForKey:[NSString stringWithFormat:@"LCDedicatedRemoved_%@", normScheme]];
+    }
+
     // 3. Check assigned app for this container instance (only for secondary containers like livecontainer2, livecontainer3...)
-    if(!selectedApp && !isMainContainer && lcAppUrlScheme && lcAppUrlScheme.length > 0) {
+    if(!selectedApp && !isMainContainer && !isDedicatedDisabledOrRemoved && lcAppUrlScheme && lcAppUrlScheme.length > 0) {
         NSString *assignedApp = [LCSharedUtils assignedAppForContainerScheme:lcAppUrlScheme];
         if(assignedApp && assignedApp.length > 0 && ![assignedApp isEqualToString:@"ui"]) {
             selectedApp = assignedApp;
@@ -873,7 +883,7 @@ int LiveContainerMain(int argc, char *argv[]) {
     }
 
     // 4. Auto-launch dedicated guest app if configured (only for secondary containers or custom dedicated IPAs)
-    if(!selectedApp && !isMainContainer) {
+    if(!selectedApp && !isMainContainer && !isDedicatedDisabledOrRemoved) {
         NSString *autoLaunchApp = lcMainBundle.infoDictionary[@"LCAutoLaunchBundleId"]
             ?: lcMainBundle.infoDictionary[@"LCAutoLaunchGuestBundleId"];
         if(!autoLaunchApp) {
@@ -883,11 +893,16 @@ int LiveContainerMain(int argc, char *argv[]) {
             autoLaunchApp = [lcSharedDefaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchBundleId_%@", lcAppUrlScheme]];
         }
         if(autoLaunchApp && autoLaunchApp.length > 0 && ![autoLaunchApp isEqualToString:@"ui"]) {
-            selectedApp = autoLaunchApp;
-            if(!selectedContainer) {
-                selectedContainer = lcMainBundle.infoDictionary[@"LCAutoLaunchContainer"]
-                    ?: [lcUserDefaults stringForKey:@"LCAutoLaunchContainer"]
-                    ?: [lcSharedDefaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchContainer_%@", lcAppUrlScheme]];
+            NSString *bundleKey = autoLaunchApp.lastPathComponent;
+            BOOL isAppDisabled = [lcSharedDefaults boolForKey:[NSString stringWithFormat:@"LCDedicatedDisabled_%@", autoLaunchApp]]
+                || [lcSharedDefaults boolForKey:[NSString stringWithFormat:@"LCDedicatedDisabled_%@", bundleKey]];
+            if(!isAppDisabled) {
+                selectedApp = autoLaunchApp;
+                if(!selectedContainer) {
+                    selectedContainer = lcMainBundle.infoDictionary[@"LCAutoLaunchContainer"]
+                        ?: [lcUserDefaults stringForKey:@"LCAutoLaunchContainer"]
+                        ?: [lcSharedDefaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchContainer_%@", lcAppUrlScheme]];
+                }
             }
         }
     }

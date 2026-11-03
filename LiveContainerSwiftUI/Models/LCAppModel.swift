@@ -149,6 +149,7 @@ class LCAppModel: ObservableObject, Hashable {
     }
     
     @Published var uiDedicatedSlot: String?
+    @Published var uiDedicatedDisabled: Bool = false
     
     public static func fetchDedicatedSlot(forApp path: String?) -> String? {
         guard let path, !path.isEmpty else { return nil }
@@ -170,6 +171,24 @@ class LCAppModel: ObservableObject, Hashable {
         return nil
     }
     
+    public static func isDedicatedDisabled(forApp path: String?, slot: String?) -> Bool {
+        guard let path, !path.isEmpty else { return false }
+        let sharedDefaults = LCUtils.appGroupUserDefault
+        let lastComp = (path as NSString).lastPathComponent
+        if sharedDefaults.bool(forKey: "LCDedicatedDisabled_\(path)") ||
+           sharedDefaults.bool(forKey: "LCDedicatedDisabled_\(lastComp)") {
+            return true
+        }
+        if let slot, slot.lowercased().hasPrefix("livecontainer"),
+           let num = slot.last, num.isNumber {
+            let scheme = "livecontainer\(num)"
+            if sharedDefaults.bool(forKey: "LCDedicatedDisabled_\(scheme)") {
+                return true
+            }
+        }
+        return false
+    }
+    
     public func updateDedicatedSlot(_ slot: String?) {
         uiDedicatedSlot = slot
         guard let path = appInfo.relativeBundlePath else { return }
@@ -178,11 +197,86 @@ class LCAppModel: ObservableObject, Hashable {
         if let slot {
             sharedDefaults.set(slot, forKey: "LCDedicatedSlot_\(path)")
             sharedDefaults.set(slot, forKey: "LCDedicatedSlot_\(lastComp)")
+            if let num = slot.last, num.isNumber {
+                let scheme = "livecontainer\(num)"
+                sharedDefaults.removeObject(forKey: "LCDedicatedRemoved_\(scheme)")
+                sharedDefaults.removeObject(forKey: "LCDedicatedDisabled_\(scheme)")
+            }
+            sharedDefaults.removeObject(forKey: "LCDedicatedDisabled_\(path)")
+            sharedDefaults.removeObject(forKey: "LCDedicatedDisabled_\(lastComp)")
+            uiDedicatedDisabled = false
         } else {
             sharedDefaults.removeObject(forKey: "LCDedicatedSlot_\(path)")
             sharedDefaults.removeObject(forKey: "LCDedicatedSlot_\(lastComp)")
         }
         sharedDefaults.synchronize()
+        objectWillChange.send()
+    }
+    
+    public func setDedicatedDisabled(_ disabled: Bool) {
+        uiDedicatedDisabled = disabled
+        guard let path = appInfo.relativeBundlePath else { return }
+        let sharedDefaults = LCUtils.appGroupUserDefault
+        let lastComp = (path as NSString).lastPathComponent
+        let slot = uiDedicatedSlot ?? Self.fetchDedicatedSlot(forApp: path)
+        let scheme: String?
+        if let slot, let num = slot.last, num.isNumber {
+            scheme = "livecontainer\(num)"
+        } else {
+            scheme = nil
+        }
+        
+        if disabled {
+            sharedDefaults.set(true, forKey: "LCDedicatedDisabled_\(path)")
+            sharedDefaults.set(true, forKey: "LCDedicatedDisabled_\(lastComp)")
+            if let scheme {
+                sharedDefaults.set(true, forKey: "LCDedicatedDisabled_\(scheme)")
+            }
+        } else {
+            sharedDefaults.removeObject(forKey: "LCDedicatedDisabled_\(path)")
+            sharedDefaults.removeObject(forKey: "LCDedicatedDisabled_\(lastComp)")
+            if let scheme {
+                sharedDefaults.removeObject(forKey: "LCDedicatedDisabled_\(scheme)")
+                sharedDefaults.removeObject(forKey: "LCDedicatedRemoved_\(scheme)")
+                sharedDefaults.set(path, forKey: "LCAutoLaunchBundleId_\(scheme)")
+            }
+        }
+        sharedDefaults.synchronize()
+        objectWillChange.send()
+    }
+    
+    public func removeDedicatedPackage() {
+        guard let path = appInfo.relativeBundlePath else { return }
+        let sharedDefaults = LCUtils.appGroupUserDefault
+        let lastComp = (path as NSString).lastPathComponent
+        let slot = uiDedicatedSlot ?? Self.fetchDedicatedSlot(forApp: path)
+        let scheme: String?
+        if let slot, let num = slot.last, num.isNumber {
+            scheme = "livecontainer\(num)"
+        } else {
+            scheme = nil
+        }
+        
+        sharedDefaults.removeObject(forKey: "LCDedicatedSlot_\(path)")
+        sharedDefaults.removeObject(forKey: "LCDedicatedSlot_\(lastComp)")
+        sharedDefaults.removeObject(forKey: "LCDedicatedDisplayName_\(path)")
+        sharedDefaults.removeObject(forKey: "LCDedicatedDisplayName_\(lastComp)")
+        sharedDefaults.removeObject(forKey: "LCDedicatedDisabled_\(path)")
+        sharedDefaults.removeObject(forKey: "LCDedicatedDisabled_\(lastComp)")
+        
+        if let scheme {
+            sharedDefaults.removeObject(forKey: "LCDedicatedDisabled_\(scheme)")
+            sharedDefaults.removeObject(forKey: "LCAutoLaunchBundleId_\(scheme)")
+            sharedDefaults.removeObject(forKey: "LCAutoLaunchGuestBundleId_\(scheme)")
+            sharedDefaults.removeObject(forKey: "LCAutoLaunchContainer_\(scheme)")
+            sharedDefaults.removeObject(forKey: "LCAssignedApp_\(scheme)")
+            sharedDefaults.removeObject(forKey: "LCAssignedContainer_\(scheme)")
+            sharedDefaults.set(true, forKey: "LCDedicatedRemoved_\(scheme)")
+        }
+        
+        sharedDefaults.synchronize()
+        uiDedicatedSlot = nil
+        uiDedicatedDisabled = false
         objectWillChange.send()
     }
     
@@ -254,7 +348,9 @@ class LCAppModel: ObservableObject, Hashable {
         self.uiIs32bit = appInfo.is32bit
         self.uiIs32bitEmulator = appInfo.is32bitEmulator
         self.uiAssignedContainer = LCSharedUtils.assignedContainerScheme(forApp: appInfo.relativeBundlePath ?? "") ?? (appInfo.info()?["LCAssignedContainer"] as? String)
-        self.uiDedicatedSlot = Self.fetchDedicatedSlot(forApp: appInfo.relativeBundlePath)
+        let slot = Self.fetchDedicatedSlot(forApp: appInfo.relativeBundlePath)
+        self.uiDedicatedSlot = slot
+        self.uiDedicatedDisabled = Self.isDedicatedDisabled(forApp: appInfo.relativeBundlePath, slot: slot)
         for container in uiContainers {
             if container.folderName == uiDefaultDataFolder {
                 self.uiSelectedContainer = container;
