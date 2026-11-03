@@ -148,6 +148,44 @@ class LCAppModel: ObservableObject, Hashable {
         }
     }
     
+    @Published var uiDedicatedSlot: String?
+    
+    public static func fetchDedicatedSlot(forApp path: String?) -> String? {
+        guard let path, !path.isEmpty else { return nil }
+        let sharedDefaults = LCUtils.appGroupUserDefault
+        if let direct = sharedDefaults.string(forKey: "LCDedicatedSlot_\(path)") {
+            return direct
+        }
+        let lastComp = (path as NSString).lastPathComponent
+        if let direct = sharedDefaults.string(forKey: "LCDedicatedSlot_\(lastComp)") {
+            return direct
+        }
+        for i in 2...5 {
+            let scheme = "livecontainer\(i)"
+            if let bound = sharedDefaults.string(forKey: "LCAutoLaunchBundleId_\(scheme)"),
+               bound == path || bound == lastComp {
+                return "LiveContainer \(i)"
+            }
+        }
+        return nil
+    }
+    
+    public func updateDedicatedSlot(_ slot: String?) {
+        uiDedicatedSlot = slot
+        guard let path = appInfo.relativeBundlePath else { return }
+        let sharedDefaults = LCUtils.appGroupUserDefault
+        let lastComp = (path as NSString).lastPathComponent
+        if let slot {
+            sharedDefaults.set(slot, forKey: "LCDedicatedSlot_\(path)")
+            sharedDefaults.set(slot, forKey: "LCDedicatedSlot_\(lastComp)")
+        } else {
+            sharedDefaults.removeObject(forKey: "LCDedicatedSlot_\(path)")
+            sharedDefaults.removeObject(forKey: "LCDedicatedSlot_\(lastComp)")
+        }
+        sharedDefaults.synchronize()
+        objectWillChange.send()
+    }
+    
     public var bundleIdentifier: String {
         get {
             return appInfo.bundleIdentifier() ?? "?"
@@ -216,6 +254,7 @@ class LCAppModel: ObservableObject, Hashable {
         self.uiIs32bit = appInfo.is32bit
         self.uiIs32bitEmulator = appInfo.is32bitEmulator
         self.uiAssignedContainer = LCSharedUtils.assignedContainerScheme(forApp: appInfo.relativeBundlePath ?? "") ?? (appInfo.info()?["LCAssignedContainer"] as? String)
+        self.uiDedicatedSlot = Self.fetchDedicatedSlot(forApp: appInfo.relativeBundlePath)
         for container in uiContainers {
             if container.folderName == uiDefaultDataFolder {
                 self.uiSelectedContainer = container;

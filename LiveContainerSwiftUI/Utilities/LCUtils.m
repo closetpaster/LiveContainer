@@ -322,8 +322,6 @@
     [manager createDirectoryAtURL:tmpPayloadPath withIntermediateDirectories:YES attributes:nil error:error];
     if (error && *error) return nil;
     
-    NSURL *tmpIPAPath = [tmpPath URLByAppendingPathComponent:[NSString stringWithFormat:@"%@.ipa", newBundleName]];
-    
     NSURL* appBundlePath = [tmpPayloadPath URLByAppendingPathComponent:@"App.app"];
     [manager copyItemAtURL:bundlePath toURL:appBundlePath error:error];
     if (error && *error) return nil;
@@ -367,8 +365,18 @@
     } mutableCopy];
     
     // Dedicated guest app configuration
+    NSString *outputFileName = newBundleName;
     if (guestAppBundlePath && guestAppBundlePath.length > 0) {
-        NSString *displayName = guestAppDisplayName;
+        NSString *slotLabel = newBundleName;
+        NSRegularExpression *slotRegex = [NSRegularExpression regularExpressionWithPattern:@"^(LiveContainer)(\\d+)$" options:NSRegularExpressionCaseInsensitive error:nil];
+        NSTextCheckingResult *match = [slotRegex firstMatchInString:newBundleName options:0 range:NSMakeRange(0, newBundleName.length)];
+        if (match && match.numberOfRanges >= 3) {
+            NSString *prefix = [newBundleName substringWithRange:[match rangeAtIndex:1]];
+            NSString *num = [newBundleName substringWithRange:[match rangeAtIndex:2]];
+            slotLabel = [NSString stringWithFormat:@"%@ %@", prefix, num];
+        }
+
+        NSString *fullDisplayName = guestAppDisplayName;
         NSDictionary *guestInfoPlist = [NSDictionary dictionaryWithContentsOfFile:[guestAppBundlePath stringByAppendingPathComponent:@"Info.plist"]];
         if (!guestInfoPlist) {
             NSData *pData = [NSData dataWithContentsOfFile:[guestAppBundlePath stringByAppendingPathComponent:@"Info.plist"]];
@@ -377,23 +385,30 @@
             }
         }
         NSDictionary *guestLCAppInfo = [NSDictionary dictionaryWithContentsOfFile:[guestAppBundlePath stringByAppendingPathComponent:@"LCAppInfo.plist"]];
-        if (!displayName || displayName.length == 0) {
-            displayName = guestInfoPlist[@"CFBundleDisplayName"] ?: guestInfoPlist[@"CFBundleName"] ?: newBundleName;
+        if (!fullDisplayName || fullDisplayName.length == 0) {
+            fullDisplayName = guestInfoPlist[@"CFBundleDisplayName"] ?: guestInfoPlist[@"CFBundleName"] ?: newBundleName;
         }
-        infoDict[@"CFBundleDisplayName"] = displayName;
-        infoDict[@"CFBundleName"] = displayName;
-        
+        if (![fullDisplayName containsString:@"LiveContainer"] && ![fullDisplayName containsString:@"livecontainer"]) {
+            fullDisplayName = [NSString stringWithFormat:@"%@ (%@)", fullDisplayName, slotLabel];
+        }
+        infoDict[@"CFBundleDisplayName"] = fullDisplayName;
+        infoDict[@"CFBundleName"] = fullDisplayName;
+
+        NSString *sanitized = [fullDisplayName stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+        sanitized = [sanitized stringByReplacingOccurrencesOfString:@":" withString:@"_"];
+        outputFileName = sanitized;
+
         NSString *relativeBundlePath = [guestAppBundlePath lastPathComponent];
         infoDict[@"LCAutoLaunchBundleId"] = relativeBundlePath;
         NSString *guestBundleId = guestInfoPlist[@"CFBundleIdentifier"] ?: guestLCAppInfo[@"LCOrignalBundleIdentifier"];
         if (guestBundleId) {
             infoDict[@"LCAutoLaunchGuestBundleId"] = guestBundleId;
         }
-        
+
         if (extraInfoDict[@"LCAutoLaunchContainer"]) {
             infoDict[@"LCAutoLaunchContainer"] = extraInfoDict[@"LCAutoLaunchContainer"];
         }
-        
+
         // Save to shared defaults as well
         NSUserDefaults *sharedDefaults = [NSUserDefaults lcSharedDefaults];
         if (!sharedDefaults) {
@@ -401,13 +416,22 @@
         }
         if (sharedDefaults) {
             NSString *scheme = [newBundleName lowercaseString];
+            NSString *oldApp = [sharedDefaults stringForKey:[NSString stringWithFormat:@"LCAutoLaunchBundleId_%@", scheme]];
+            if (oldApp && ![oldApp isEqualToString:relativeBundlePath]) {
+                [sharedDefaults removeObjectForKey:[NSString stringWithFormat:@"LCDedicatedSlot_%@", oldApp]];
+                [sharedDefaults removeObjectForKey:[NSString stringWithFormat:@"LCDedicatedSlot_%@", oldApp.lastPathComponent]];
+            }
             [sharedDefaults setObject:relativeBundlePath forKey:[NSString stringWithFormat:@"LCAutoLaunchBundleId_%@", scheme]];
+            [sharedDefaults setObject:slotLabel forKey:[NSString stringWithFormat:@"LCDedicatedSlot_%@", relativeBundlePath]];
+            [sharedDefaults setObject:slotLabel forKey:[NSString stringWithFormat:@"LCDedicatedSlot_%@", relativeBundlePath.lastPathComponent]];
+            [sharedDefaults setObject:fullDisplayName forKey:[NSString stringWithFormat:@"LCDedicatedDisplayName_%@", relativeBundlePath]];
             if (guestBundleId) {
                 [sharedDefaults setObject:guestBundleId forKey:[NSString stringWithFormat:@"LCAutoLaunchGuestBundleId_%@", scheme]];
             }
             if (extraInfoDict[@"LCAutoLaunchContainer"]) {
                 [sharedDefaults setObject:extraInfoDict[@"LCAutoLaunchContainer"] forKey:[NSString stringWithFormat:@"LCAutoLaunchContainer_%@", scheme]];
             }
+            [sharedDefaults synchronize];
         }
         
         // Copy guest URL schemes so the dedicated container can respond to deep links
@@ -685,6 +709,8 @@
     
     [infoDict writeToURL:infoPath error:error];
     
+    NSURL *tmpIPAPath = [tmpPath URLByAppendingPathComponent:[NSString stringWithFormat:@"%@.ipa", outputFileName]];
+
     dlopen("/System/Library/PrivateFrameworks/PassKitCore.framework/PassKitCore", RTLD_GLOBAL);
     NSData *zipData = [[NSClassFromString(@"PKZipArchiver") new] zippedDataForURL:tmpPayloadPath.URLByDeletingLastPathComponent];
     if (!zipData) return nil;

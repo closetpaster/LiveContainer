@@ -180,37 +180,14 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             })
         }
 
-        let currentAssigned = model.uiAssignedContainer
-        let assignSchemes: [(title: String, scheme: String?)] = [
-            ("lc.appBanner.assignNone".loc, nil),
-            ("LiveContainer 1 (Main)", "livecontainer"),
-            ("LiveContainer 2", "livecontainer2"),
-            ("LiveContainer 3", "livecontainer3"),
-            ("LiveContainer 4", "livecontainer4"),
-            ("LiveContainer 5", "livecontainer5")
-        ]
-        let assignActions = assignSchemes.map { item in
-            let isSelected: Bool
-            if let targetScheme = item.scheme {
-                isSelected = (currentAssigned == targetScheme) || (targetScheme == "livecontainer" && currentAssigned == "livecontainer1")
-            } else {
-                isSelected = (currentAssigned == nil)
+        sectionChildren.append(UIAction(
+            title: "lc.appBanner.createDedicatedLC".loc,
+            image: UIImage(systemName: "shippingbox.fill")
+        ) { [weak self] _ in
+            Task { [weak self] in
+                await self?.packageDedicatedLiveContainer()
             }
-            return UIAction(
-                title: item.title,
-                image: isSelected ? UIImage(systemName: "checkmark.circle.fill") : nil,
-                state: isSelected ? .on : .off
-            ) { [weak self] _ in
-                self?.configuration.model.uiAssignedContainer = item.scheme
-                self?.refreshView()
-            }
-        }
-        let assignMenu = UIMenu(
-            title: "lc.appBanner.assignToLiveContainer".loc,
-            image: UIImage(systemName: "arrow.triangle.branch"),
-            children: assignActions
-        )
-        sectionChildren.append(assignMenu)
+        })
 
         let addToHomeScreenMenu = UIMenu(
             title: "lc.appBanner.addToHomeScreen".loc,
@@ -238,11 +215,6 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
                 UIAction(title: "lc.appBanner.saveAppIcon".loc, image: UIImage(systemName: "square.and.arrow.down")) { [weak self] _ in
                     Task { @MainActor [weak self] in
                         await self?.saveIcon()
-                    }
-                },
-                UIAction(title: "lc.appBanner.createDedicatedLC".loc, image: UIImage(systemName: "shippingbox.fill")) { [weak self] _ in
-                    Task { [weak self] in
-                        await self?.packageDedicatedLiveContainer()
                     }
                 }
             ]
@@ -364,15 +336,11 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             return
         }
         let model = configuration.model
-        if model.uiAssignedContainer == nil {
-            model.uiAssignedContainer = "livecontainer"
-            refreshView()
-        }
         let appInfo = model.appInfo
         let displayName = appInfo.displayName() ?? model.displayName
         let rawBundlePath = appInfo.bundlePath() ?? appInfo.relativeBundlePath
         let containerFolder = model.uiSelectedContainer?.folderName
-        let scheme = model.uiAssignedContainer
+        let scheme = model.uiAssignedContainer ?? "livecontainer"
 
         guard let data = LCUtils.generateWebClipProfileData(
             withBundlePath: rawBundlePath,
@@ -530,15 +498,11 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             return
         }
         let model = configuration.model
-        if model.uiAssignedContainer == nil {
-            model.uiAssignedContainer = "livecontainer"
-            refreshView()
-        }
         let appInfo = model.appInfo
         let displayName = appInfo.displayName() ?? model.displayName
         let rawBundlePath = appInfo.bundlePath() ?? appInfo.relativeBundlePath
         let containerFolder = model.uiSelectedContainer?.folderName
-        let scheme = model.uiAssignedContainer
+        let scheme = model.uiAssignedContainer ?? "livecontainer"
 
         guard let data = LCUtils.generateWebClipProfileData(
             withBundlePath: rawBundlePath,
@@ -664,7 +628,17 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             return
         }
 
-        let installMethod = await promptForDedicatedLCInstallMethod(targetSlot: targetSlot, appName: displayName)
+        let slotLabel: String
+        if targetSlot.lowercased().hasPrefix("livecontainer"),
+           let numChar = targetSlot.last, numChar.isNumber {
+            slotLabel = "LiveContainer \(numChar)"
+        } else {
+            slotLabel = targetSlot
+        }
+
+        let formattedAppName = "\(displayName) (\(slotLabel))"
+
+        let installMethod = await promptForDedicatedLCInstallMethod(targetSlot: slotLabel, appName: formattedAppName)
         guard installMethod != 0 else {
             return
         }
@@ -685,9 +659,12 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             let packedIpaUrl = try LCUtils.archiveIPA(
                 withBundleName: targetSlot,
                 guestAppBundlePath: bundlePath,
-                guestAppDisplayName: displayName,
+                guestAppDisplayName: formattedAppName,
                 includingExtraInfoDict: extraInfo
             )
+
+            model.updateDedicatedSlot(slotLabel)
+            refreshView()
 
             if installMethod == 2 {
                 let launchURLStr = packedIpaUrl.absoluteString
@@ -718,11 +695,12 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             return nil
         }
 
-        let slots = ["LiveContainer2", "LiveContainer3", "LiveContainer4", "LiveContainer5"]
-        let lc2Installed = UIApplication.shared.canOpenURL(URL(string: "livecontainer2://")!)
-        if !lc2Installed {
-            return "LiveContainer2"
-        }
+        let slots: [(id: String, name: String)] = [
+            ("LiveContainer2", "LiveContainer 2"),
+            ("LiveContainer3", "LiveContainer 3"),
+            ("LiveContainer4", "LiveContainer 4"),
+            ("LiveContainer5", "LiveContainer 5")
+        ]
 
         return await withUnsafeContinuation { continuation in
             let alert = UIAlertController(
@@ -732,11 +710,11 @@ final class LCAppBannerViewController: UIViewController, UIContextMenuInteractio
             )
 
             for slot in slots {
-                let isInstalled = (slot == "LiveContainer2") ? lc2Installed : UIApplication.shared.canOpenURL(URL(string: "\(slot.lowercased())://")!)
-                let title = isInstalled ? "\(slot) (Installed - Replace)" : slot
+                let isInstalled = UIApplication.shared.canOpenURL(URL(string: "\(slot.id.lowercased())://")!)
+                let title = isInstalled ? "\(slot.name) (Installed - Replace)" : slot.name
                 alert.addAction(UIAlertAction(title: title, style: .default) { [weak alert] _ in
                     alert?.dismiss(animated: true) {
-                        continuation.resume(returning: slot)
+                        continuation.resume(returning: slot.id)
                     }
                 })
             }
